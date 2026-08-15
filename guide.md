@@ -10,7 +10,7 @@ keyboard/mouse/window automation over plain CLI commands.
 
 | Piece | What it is | Where |
 |---|---|---|
-| Container | Ubuntu 24.04 + XFCE desktop | Docker image `computer-desktop` |
+| Container | Debian 13 (trixie) + XFCE | Docker image `computer-desktop` |
 | Display | Xvfb virtual X server on `:99` | inside container |
 | VNC | x11vnc on port `5900` | inside container (not exposed) |
 | noVNC | websockify + noVNC, **port `6080`** | exposed to host |
@@ -69,7 +69,7 @@ and window actions. Every call is a one-liner, so it's trivial to wrap in
 ### 2.1 Keyboard
 
 ```bash
-docker exec linux-desktop xdotool key ctrl+alt+t        # open terminal
+docker exec -d linux-desktop bash -c 'DISPLAY=:99 xfce4-terminal --title=Demo --command=bash'   # open terminal
 docker exec linux-desktop xdotool key --window "$(xdotool getactivewindow)" ctrl+c
 docker exec linux-desktop xdotool type --delay 50 'echo hello world'
 ```
@@ -218,7 +218,7 @@ curl -sI http://localhost:6080/vnc.html
 docker exec linux-desktop pgrep -f xfce4-session
 
 # xdotool quick reference
-docker exec linux-desktop xdotool key ctrl+alt+t
+docker exec -d linux-desktop bash -c 'DISPLAY=:99 xfce4-terminal --title=Demo --command=bash'
 docker exec linux-desktop xdotool type --delay 50 "text"
 docker exec linux-desktop xdotool mousemove 800 450 click 1
 docker exec linux-desktop bash -c 'xdotool search --name "Terminal" windowactivate --sync'
