@@ -4,7 +4,6 @@ services:
     container_name: linux-desktop
     ports:
       - "6080:6080"
-      - "9222:9222"
     volumes:
       - ./workspace:/workspace
     environment:

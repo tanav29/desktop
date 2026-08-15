@@ -14,6 +14,7 @@ RUN apt-get update \
       xvfb \
       x11vnc \
       x11-utils \
+      xdotool \
       dbus-x11 \
       xfce4-session \
       xfce4-panel \
@@ -27,14 +28,11 @@ RUN apt-get update \
       fonts-dejavu-core \
       git \
       curl \
-      wget \
       ripgrep \
       nano \
-      vim \
       python3 \
-      nodejs \
-      npm \
       build-essential \
+      imagemagick \
       ca-certificates \
       unzip \
       libnspr4 \
@@ -55,6 +53,7 @@ RUN apt-get update \
       libxtst6 \
       libxss1 \
  && apt-get autoremove -y \
+ && apt-get clean \
  && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* \
  && rm -rf /usr/share/doc /usr/share/man
 
@@ -64,7 +63,8 @@ RUN curl -fsSL https://github.com/novnc/noVNC/archive/refs/tags/v1.5.0.tar.gz -o
  && mv /opt/noVNC-1.5.0 /opt/novnc \
  && curl -fsSL https://github.com/novnc/websockify/archive/refs/tags/v0.12.0.tar.gz -o /tmp/ws.tar.gz \
  && tar -xzf /tmp/ws.tar.gz -C /opt \
- && mv /opt/websockify-0.12.0 /opt/websockify
+ && mv /opt/websockify-0.12.0 /opt/websockify \
+ && rm -rf /tmp/novnc.tar.gz /tmp/ws.tar.gz
 
 # Chromium (real build from Chrome for Testing; the Ubuntu package is a snap stub that does not work in Docker)
 RUN curl -fsSL https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json -o /tmp/cft.json \
@@ -74,9 +74,10 @@ RUN curl -fsSL https://googlechromelabs.github.io/chrome-for-testing/last-known-
  && mv /opt/chrome-linux64 /opt/chrome \
  && rm -f /opt/chrome/chrome_sandbox \
  && ln -s /opt/chrome/chrome /usr/local/bin/chromium \
+ && apt-get purge -y unzip \
  && rm -rf /tmp/*
 
-RUN printf '[Desktop Entry]\nType=Application\nName=Chromium\nComment=Web browser\nExec=/opt/chrome/chrome --no-sandbox --disable-dev-shm-usage --no-first-run --remote-debugging-port=9222 %%U\nIcon=applications-internet\nTerminal=false\nCategories=Network;WebBrowser;\nMimeType=text/html;text/xml;application/xhtml+xml;\n' > /usr/share/applications/chromium.desktop \
+RUN printf '[Desktop Entry]\nType=Application\nName=Chromium\nComment=Web browser\nExec=/opt/chrome/chrome --no-sandbox --disable-dev-shm-usage --no-first-run %%U\nIcon=applications-internet\nTerminal=false\nCategories=Network;WebBrowser;\nMimeType=text/html;text/xml;application/xhtml+xml;\n' > /usr/share/applications/chromium.desktop \
  && chmod 644 /usr/share/applications/chromium.desktop \
  && mkdir -p /workspace \
  && chmod 777 /workspace

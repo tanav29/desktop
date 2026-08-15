@@ -1,7 +1,8 @@
-# Browser Control Guide — Docker Linux Desktop
+# Desktop Control Guide — Docker Linux Desktop
 
-Everything you need to build an SDK that creates, kills, and controls the
-Chromium browser running inside the Docker desktop container.
+Everything you need to build an SDK that starts, kills, and controls the
+desktop (and apps on it) inside the Docker container — using `xdotool` for
+keyboard/mouse/window automation over plain CLI commands.
 
 ---
 
@@ -13,16 +14,17 @@ Chromium browser running inside the Docker desktop container.
 | Display | Xvfb virtual X server on `:99` | inside container |
 | VNC | x11vnc on port `5900` | inside container (not exposed) |
 | noVNC | websockify + noVNC, **port `6080`** | exposed to host |
+| Desktop control | `xdotool` (X11 automation CLI) | inside container |
+| Screenshots | ImageMagick (`import` / `convert`) | inside container |
 | Browser | Chromium (Chrome-for-Testing build) at `/opt/chrome/chrome` | inside container |
-| CDP | Chromium DevTools Protocol, **port `9222`** | exposed to host |
 | Working dir | `/workspace` (host folder `./workspace` mounted in) | host ↔ container |
 
 Files:
 
 ```
 computer/
-├── Dockerfile          # image definition (XFCE, tools, Chromium, noVNC)
-├── docker-compose.yml  # ports 6080 + 9222, /workspace volume, resource caps
+├── Dockerfile          # image definition (XFCE, tools, xdotool, Chromium, noVNC)
+├── docker-compose.yml  # port 6080, /workspace volume, resource caps
 ├── entrypoint.sh       # starts Xvfb → XFCE → x11vnc → websockify
 └── workspace/          # created on first run, persists between restarts
 ```
@@ -38,231 +40,156 @@ docker ps --filter name=linux-desktop
 
 The desktop is reachable at <http://localhost:6080/vnc.html>.
 
-## 2. How the browser is launched
+### 1.1 Preinstalled toolchain (agent's workbench)
 
-### 2.1 The desktop browser (the one you see in noVNC)
-
-When you open Chromium from the XFCE menu, it runs the desktop entry written in
-the Dockerfile:
-
-```
-/opt/chrome/chrome --no-sandbox --disable-dev-shm-usage --no-first-run \
-    --remote-debugging-port=9222
-```
-
-Flags explained:
-
-| Flag | Why |
+| Category | Tools |
 |---|---|
-| `--no-sandbox` | user namespaces aren't available inside Docker; sandbox would crash |
-| `--disable-dev-shm-usage` | container `/dev/shm` is only 64 MB; write to `/tmp` instead |
-| `--no-first-run` | skip first-run wizard in the desktop |
+| Build | `gcc`, `g++`, `make` (build-essential) |
+| Languages | python 3 |
+| Editor / shell | `nano`, `bash` (terminal: xfce4-terminal) |
+| VCS | `git` |
+| Network | `curl`, `ca-certificates` |
+| Search | `ripgrep` |
+| Images | ImageMagick: `import` (screenshot), `convert` |
+| X11 control | `xdotool`, `xvfb`, `x11vnc` |
+| Browser | Chromium via `/opt/chrome/chrome` (alias `chromium`) |
 
-Its profile lives at `/root/.config/chromium` — inside the container image, so
-it does **not** survive `docker compose down`. Keep data you care about under
-`/workspace`.
-
-### 2.2 CDP is always on
-
-`--remote-debugging-port=9222` means the desktop Chromium answers the DevTools
-Protocol on `9222`. Because compose maps `9222:9222`, the host can reach it:
+No `node`/`npm` (kept out for size). If you need them later:
 
 ```bash
-curl -s http://localhost:9222/json/version      # {"Browser":"Chrome/...","webSocketDebuggerUrl":...}
-curl -s http://localhost:9222/json/list          # open tabs as JSON
+docker exec -d linux-desktop bash -c 'apt-get update && apt-get install -y --no-install-recommends nodejs npm'
 ```
 
-> Security note: this exposes **full browser control on localhost** (cookies,
-> page content, file reads inside the container). No auth between host and
-> container. Fine for a local disposable machine; add a token now that the box
-> is exposed to other networks.
+## 2. Controlling the desktop (xdotool)
 
-## 3. Creating browser instances (your SDK's "create")
+`xdotool` talks to the X server (`DISPLAY=:99`) and simulates keyboard, mouse,
+and window actions. Every call is a one-liner, so it's trivial to wrap in
+`docker exec` from the host or inside the container.
 
-Two lifecycles to manage:
-
-### 3.1 The desktop instance (persistent, visible)
+### 2.1 Keyboard
 
 ```bash
-docker exec -d linux-desktop bash -c 'DISPLAY=:99 /opt/chrome/chrome \
-  --no-sandbox --disable-dev-shm-usage --no-first-run \
-  --remote-debugging-port=9222 \
-  --user-data-dir=/workspace/.chromium \
-  about:blank'
+docker exec linux-desktop xdotool key ctrl+alt+t        # open terminal
+docker exec linux-desktop xdotool key --window "$(xdotool getactivewindow)" ctrl+c
+docker exec linux-desktop xdotool type --delay 50 'echo hello world'
 ```
 
-- `DISPLAY=:99` must be set for headed mode.
-- `--user-data-dir` stores profile on the persisted volume so it survives
-  container recreation.
-- Keep the same `--remote-debugging-port` for all instances that share a
-  profile — Chromium delegates to the running instance instead of starting a
-  second one.
+Notable key names: `Return`, `Tab`, `Escape`, `BackSpace`, `Delete`,
+`Left/Right/Up/Down`, `Home`, `End`, `Page_Up/Page_Down`, `F1`–`F12`,
+`Super_L` (Windows key). Modifiers combine with `+` (`ctrl+shift+t`).
 
-### 3.2 Ephemeral SDK "worker" instances (headless, parallel)
-
-For automation you usually don't want a window on the desktop. One worker per
-port + profile:
+### 2.2 Mouse
 
 ```bash
-docker exec -d linux-desktop bash -c '
-  /opt/chrome/chrome --no-sandbox --disable-dev-shm-usage \
-    --headless=new \
-    --remote-debugging-port=9223 \
-    --user-data-dir=/tmp/worker-9223 \
-    --no-first-run \
-    about:blank'
+docker exec linux-desktop xdotool mousemove 800 450            # absolute move
+docker exec linux-desktop xdotool mousemove_relative 20 -10    # relative move
+docker exec linux-desktop xdotool click 1                      # left click
+docker exec linux-desktop xdotool click --repeat 2 5           # double-click (button 5 = wheel down)
+docker exec linux-desktop xdotool mousedown 1; xdotool mousemove_relative 50 50; xdotool mouseup 1  # drag
+```
+
+`DISPLAY` defaults to `:99` via the container env, so plain `xdotool` works
+inside the container; from the host wrap in `docker exec linux-desktop ...`.
+
+### 2.3 Windows
+
+```bash
+docker exec linux-desktop bash -c 'xdotool search --name -- "Terminal" windowactivate --sync'
+docker exec linux-desktop xdotool search --onlyvisible --class chromium windowmove 0 0 windowsize 800 600
+docker exec linux-desktop xdotool search --name "Terminal" windowminimize
+docker exec linux-desktop bash -c 'xdotool getactivewindow getwindowname'   # what has focus
+docker exec linux-desktop xdotool search --onlyvisible --class "" getactivewindow 2>/dev/null
+```
+
+`windowactivate --sync` waits until the window is actually focused — important
+before typing. `search --onlyvisible` ignores hidden/minimized windows.
+
+### 2.4 Verify before you type (race-free pattern)
+
+xdotool is fire-and-forget; a window may not exist yet when you send keys. The
+reliable pattern is: search → activate (sync) → type:
+
+```bash
+docker exec linux-desktop bash -c '
+  wid=$(xdotool search --onlyvisible --name "Terminal" | head -1)
+  xdotool windowactivate --sync "$wid"
+  xdotool type --delay 40 "ls -la" && xdotool key Return'
+```
+
+Poll with `xdotool search` in a retry loop while an app is starting
+(`--timeout`/`--sync` combinations plus a few `sleep 1` rounds work well).
+
+### 2.5 Screenshots
+
+ImageMagick is preinstalled — grab the whole desktop, or a crop of it:
+
+```bash
+docker exec linux-desktop import -window root -display :99 /workspace/desktop.png
+docker exec linux-desktop bash -c 'import -window root -display :99 /workspace/desktop.png && convert /workspace/desktop.png -crop 400x300+600+200 /workspace/crop.png'
+```
+
+Run screenshots from the host side with `docker exec`; write to `/workspace` so
+they land on the host disk. This is how the agent *sees* the state of the UI
+before/after xdotool actions.
+
+## 3. Launching apps on the desktop
+
+### 3.1 Visible app for humans / demo
+
+```bash
+docker exec -d linux-desktop bash -c 'DISPLAY=:99 xfce4-terminal --title=Demo --command=bash'
+docker exec -d linux-desktop bash -c 'DISPLAY=:99 /opt/chrome/chrome --no-sandbox --disable-dev-shm-usage --no-first-run https://example.com'
+```
+
+The Chromium desktop entry (XFCE menu) uses the same flags without the
+debugging port — the 9222/CDP surface has been removed.
+
+### 3.2 Ephemeral SDK "worker" windows (parallel, disposable)
+
+One window per worker; kill by window title:
+
+```bash
+docker exec -d linux-desktop bash -c 'DISPLAY=:99 xfce4-terminal --title=worker-1 --command=bash'
+docker exec linux-desktop xdotool search --name "worker-1" windowkill
 ```
 
 Rules of thumb:
 
-- `--headless=new` = no X server needed, lightest resource use
-  (`--headless` old-style works too).
-- Ports must be unique per running instance; `9222` belongs to the desktop.
-- Each new `--user-data-dir` = fresh clean profile (no cookies/history).
-- Headed instances need `DISPLAY=:99`; headless ones don't.
-- If you want to *see* a worker in the desktop, drop `--headless=new`.
+- Always pass `DISPLAY=:99` (exported by the entrypoint, but `docker exec`
+  shells get the container env anyway; being explicit never hurts).
+- `--no-first-run` keeps Chromium from showing the setup wizard.
+- If you don't need a visible window, skip the desktop entirely — run
+  headless with `--headless=new` and no `DISPLAY`.
 
-To expose additional ports to the host, extend the compose `ports:` list
-(`9223:9223`, …) or skip host access and talk to `9223` from inside the
-container (SDK runs in the container instead of on the host).
-
-### 3.3 Lifecycle from one shell (suggested wrapper)
+## 4. Killing apps
 
 ```bash
-# create
-docker exec -d linux-desktop bash -c 'DISPLAY=:99 /opt/chrome/chrome \
-  --no-sandbox --disable-dev-shm-usage --no-first-run \
-  --remote-debugging-port="${1}" --user-data-dir="/tmp/worker-${1}" about:blank' _ 9223
+docker exec linux-desktop bash -c 'pkill -f "xfce4-terminal.*worker-1"'  # by command line
+docker exec linux-desktop xdotool search --name "worker-1" windowkill    # by window
+docker exec -d linux-desktop bash -c 'killall chromium'                  # everything
+docker compose down && docker compose up -d                              # reset the whole box
 ```
 
-An SDK can wrap this in one `docker exec` per instance and keep a
-`port → instance` registry.
+`pkill -f` matches the full command line — keep titles/flags unique per
+instance. PID 1 inside the container is `tini` (compose `init: true`), which
+reaps children, so kills are clean.
 
-## 4. Killing browser instances (your SDK's "kill")
+## 5. SDK blueprint
 
-```bash
-# kill one instance by port (its debugger process holds the port):
-docker exec linux-desktop bash -c 'fuser -k 9223/tcp 2>/dev/null; pkill -f "user-data-dir=/tmp/worker-9223"'
+Minimum viable control plane for a desktop-automation SDK:
 
-# kill every Chromium process (including the desktop one):
-docker exec linux-desktop bash -c 'pkill -f "opt/chrome/chrome"'
-
-# nuke everything and restart the whole environment:
-docker compose down && docker compose up -d
-```
-
-`pkill -f` matches the full command line — that's why instance command lines
-carry the port/profile name. PID 1 inside the container is `tini`
-(compose `init: true`), which reaps children, so kills are clean.
-
-## 5. Controlling the browser (CDP - your SDK's "control")
-
-Two layers: the HTTP surface (discovery) and the WebSocket surface (driving).
-
-### 5.1 Discovery (HTTP, no libraries)
-
-```bash
-curl -s http://localhost:9222/json/version   # browser version + debugger ws url
-curl -s http://localhost:9222/json/list      # targets: pages, workers, etc.
-```
-
-Create a new tab (200 returns `webSocketDebuggerUrl`):
-
-```bash
-curl -s -X PUT 'http://localhost:9222/json/new?about:blank'
-```
-
-### 5.2 Drive (WebSocket, any language)
-
-Every target from `/json/list` has a `webSocketDebuggerUrl`. Send
-`{"id":1,"method":"Page.navigate","params":{"url":"https://example.com"}}`
-and read `{"id":1,"result":...}` replies. Event messages arrive unsolicited
-(`Page.loadEventFired`, etc.).
-
-Node (no deps — Node 22 has a global `WebSocket`):
-
-```js
-const tab = (await (await fetch('http://localhost:9222/json/list')).json()).find(t => t.type === 'page');
-const ws = new WebSocket(tab.webSocketDebuggerUrl);
-ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: 'Page.navigate', params: { url: 'https://example.com' } }));
-ws.onmessage = (e) => console.log(e.data.slice(0, 120));
-```
-
-Python (stdlib only, no `websockets` package):
-
-```python
-import json, urllib.request
-from websocket import create_connection  # or: pip install websocket-client
-
-targets = json.load(urllib.request.urlopen('http://localhost:9222/json/list'))
-ws = create_connection([t for t in targets if t['type'] == 'page'][0]['webSocketDebuggerUrl'])
-ws.send(json.dumps({"id": 1, "method": "Page.navigate", "params": {"url": "https://example.com"}}))
-print(ws.recv()[:200])
-```
-
-Useful first commands: `Runtime.evaluate`, `Page.captureScreenshot`,
-`Page.navigate`, `Emulation.setDeviceMetricsOverride`,
-`Browser.close` (kills the instance remotely).
-
-## 6. agent-browser (installed CLI, `v0.28.0`)
-
-`agent-browser` is a native CLI that drives Chrome/Chromium over CDP. It's
-installed on the host and works against this container in two ways.
-
-### 6.1 Drive the browser inside the container (mode B — recommended for SDK work)
-
-The container's Chromium already listens on `9222`, so attach directly:
-
-```bash
-agent-browser --cdp 9222 open https://example.com   # new tab in the container's browser
-agent-browser --cdp 9222 snapshot -i                # accessibility snapshot with @eN refs
-agent-browser --cdp 9222 click @e1
-agent-browser --cdp 9222 screenshot page.png
-```
-
-All agent-browser commands work this way (snapshot, click, fill, eval, tab,
-record video…). See `agent-browser skills get core --full` for the full
-reference. Pass `--cdp <port>` on every command or export
-`AGENT_BROWSER_CDP=9222`. The browser stays alive between commands.
-
-### 6.2 Drive the web page served by noVNC (mode A — end-to-end desktop checks)
-
-http://localhost:6080/vnc.html is a normal web page, so you can automate it
-with agent-browser's own Chrome:
-
-```bash
-agent-browser open http://localhost:6080/vnc.html
-agent-browser snapshot -i
-agent-browser screenshot desktop.png
-```
-
-Useful to verify the desktop boots and renders, not for day-to-day control.
-
-### 6.3 Running agent-browser inside the container
-
-All control traffic can stay local if you hide `9222` from the host:
-
-```bash
-docker exec linux-desktop bash -c 'npm i -g agent-browser && agent-browser install'
-docker exec linux-desktop agent-browser --cdp 9222 open https://example.com
-```
-
-That's the cleanest isolation model for an SDK: host never touches browser
-ports, everything goes through `docker exec`.
-
-## 7. SDK blueprint (from the pieces above)
-
-Minimum viable control plane:
-
-1. **Instance registry** — table of `name → port → user-data-dir → headed?`.
-   Ports `9222` (desktop) + `9223+` (workers). Persist it in `/workspace`.
-2. **Create** — one `docker exec -d` with the flags from §3; register the port.
-3. **Kill** — `pkill -f "user-data-dir=/tmp/worker-<port>"` via §4; unregister.
-4. **Control** — hit `http://<host>:<port>/json/*` for discovery, WebSocket
-   for commands (raw CDP), or wrap `agent-browser --cdp <port> <cmd>` for a
-   higher-level API (snapshots, clicks, screenshots, video).
-5. **Wait for ready** — poll `curl -s http://localhost:<port>/json/version`
-   until it answers (a few seconds after launch).
+1. **Instance registry** — table of `name → window title → command line`.
+   Persist it in `/workspace`.
+2. **Create** — one `docker exec -d` with a unique `--title`/`--user-data-dir`;
+   register the entry.
+3. **Kill** — `pkill -f "worker-1"` or `xdotool search --name worker-1 windowkill`;
+   unregister.
+4. **Control** — one `docker exec linux-desktop xdotool ...` per action:
+   `key`, `type`, `mousemove`, `click`, `search`, `windowactivate`, …
+   plus `import` for before/after screenshots. Host wrapper → container = no
+   extra ports, everything over the Docker API.
+5. **Wait for ready** — poll `xdotool search --name <title>` until found,
+   then `windowactivate --sync` before the first keystroke.
 6. **Health of the desktop itself** — `curl -sf http://localhost:6080/vnc.html`
    for the environment; `docker exec linux-desktop pgrep -f xfce4-session`
    for the desktop.
@@ -271,13 +198,14 @@ Failure modes to expect:
 
 | Symptom | Cause / fix |
 |---|---|
-| Browser won't start | port already bound by another instance → unique ports |
-| `DevToolsActivePort file doesn't exist` | instance already running for that profile → reuse port or new profile |
-| Headed instance invisible | missing `DISPLAY=:99` |
-| Tab HTTP 404 | debugging port not enabled on that instance |
+| Typing goes nowhere | window not focused → `windowactivate --sync` first |
+| `windowkill` kills the wrong thing | title too generic → make titles unique per worker |
+| App invisible | missing `DISPLAY=:99`, or minimised → `windowactivate` |
+| Nothing on screen at all | Xvfb crashed → `docker compose logs`; desktop health check §6 |
+| `Can't open display` | env lost → pass `DISPLAY=:99` explicitly |
 | Container OOM | Chromium is the heavy process; `mem_limit: 3g` in compose |
 
-## 8. Reference
+## 6. Reference
 
 ```bash
 # environment
@@ -289,14 +217,19 @@ docker compose logs -f
 curl -sI http://localhost:6080/vnc.html
 docker exec linux-desktop pgrep -f xfce4-session
 
-# browser health
-curl -s http://localhost:9222/json/version
+# xdotool quick reference
+docker exec linux-desktop xdotool key ctrl+alt+t
+docker exec linux-desktop xdotool type --delay 50 "text"
+docker exec linux-desktop xdotool mousemove 800 450 click 1
+docker exec linux-desktop bash -c 'xdotool search --name "Terminal" windowactivate --sync'
 
-# attached automation (host)
-agent-browser --cdp 9222 snapshot -i
-agent-browser --cdp 9222 screenshot /workspace/shot.png
+# screenshot
+docker exec linux-desktop import -window root -display :99 /workspace/shot.png
 
-# inside-container automation
-docker exec -d linux-desktop bash -c 'DISPLAY=:99 /opt/chrome/chrome --no-sandbox --disable-dev-shm-usage --no-first-run --remote-debugging-port=9222 about:blank'
-docker exec linux-desktop pkill -f "opt/chrome/chrome"
+# compile a quick C file (build-essential is installed)
+docker exec linux-desktop bash -c 'printf "int main(){return 0;}" > /workspace/t.c && gcc /workspace/t.c -o /workspace/t'
+
+# launch / kill an app by title
+docker exec -d linux-desktop bash -c 'DISPLAY=:99 xfce4-terminal --title=worker-1'
+docker exec linux-desktop bash -c 'pkill -f "worker-1"'
 ```
