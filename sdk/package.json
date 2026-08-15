@@ -1,0 +1,22 @@
+{
+  "name": "computer-use-sdk",
+  "version": "0.1.0",
+  "description": "Minimal TS SDK to drive the Docker Linux desktop: run commands, create/kill apps, screenshot",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "typescript": "^5.5.0"
+  }
+}
