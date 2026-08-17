@@ -3,12 +3,12 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { Camera, ExternalLink, Maximize2, Minimize2, RefreshCw, WifiOff } from "lucide-react";
+import { Camera, Maximize2, Minimize2, RefreshCw, WifiOff } from "lucide-react";
 
 type Health = { ok: boolean; model?: string; error?: string };
 
 const VNC_URL =
-  "http://localhost:6080/vnc_lite.html?autoconnect=true&host=localhost&port=6080&resize=scale&reconnect=true&reconnect_delay=2000";
+  "http://localhost:6080/vnc_lite.html?host=localhost&port=6080&scale=true";
 
 export function ScreenPane({ busy }: { busy: boolean }) {
   const [health, setHealth] = useState<Health | null>(null);
@@ -113,15 +113,6 @@ export function ScreenPane({ busy }: { busy: boolean }) {
           >
             <Camera className="size-3" />
             screenshot
-          </a>
-          <a
-            href="http://localhost:6080/vnc.html"
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center gap-1.5 rounded-md px-2 py-1 text-zinc-300 transition-colors hover:bg-white/10 hover:text-white"
-          >
-            <ExternalLink className="size-3" />
-            full client
           </a>
         </span>
       </div>

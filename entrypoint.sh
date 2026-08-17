@@ -30,7 +30,7 @@ x11vnc -forever -shared -nopw -display "${DISPLAY}" >/var/log/x11vnc.log 2>&1 &
 X11VNC_PID=$!
 
 echo "[entrypoint] Starting noVNC on 6080"
-/opt/websockify/run --web /opt/novnc 6080 localhost:5900 &
+(cd /opt/websockify && python3 -m websockify --web /opt/novnc 6080 localhost:5900) &
 WEBSOCKIFY_PID=$!
 
 echo "[entrypoint] Starting HTTP API on 8095"
@@ -42,5 +42,5 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo "[entrypoint] Ready at http://localhost:6080/vnc.html"
+echo "[entrypoint] Ready at http://localhost:6080/vnc_lite.html"
 wait

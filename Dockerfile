@@ -61,14 +61,16 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* \
     && rm -rf /usr/share/doc /usr/share/man
 
-# noVNC + websockify from GitHub (apt websockify would drag in numpy; these run stdlib-only)
-RUN curl -fsSL https://github.com/novnc/noVNC/archive/refs/tags/v1.5.0.tar.gz -o /tmp/novnc.tar.gz \
- && tar -xzf /tmp/novnc.tar.gz -C /opt \
- && mv /opt/noVNC-1.5.0 /opt/novnc \
- && curl -fsSL https://github.com/novnc/websockify/archive/refs/tags/v0.12.0.tar.gz -o /tmp/ws.tar.gz \
- && tar -xzf /tmp/ws.tar.gz -C /opt \
- && mv /opt/websockify-0.12.0 /opt/websockify \
- && rm -rf /tmp/novnc.tar.gz /tmp/ws.tar.gz
+# noVNC lite (RFB core) + websockify from npm/PyPI — GitHub tarballs are
+# IP-rate-limited; apt websockify would drag in numpy (these run stdlib-only)
+RUN curl -fsSL https://registry.npmjs.org/@novnc/novnc/-/novnc-1.5.0.tgz -o /tmp/novnc.tgz \
+ && mkdir -p /tmp/novncpkg \
+ && tar -xzf /tmp/novnc.tgz -C /tmp/novncpkg \
+ && mv /tmp/novncpkg/package/lib /opt/novnc \
+ && curl -fsSL https://pypi.org/packages/py3/w/websockify/websockify-0.12.0-py3-none-any.whl -o /tmp/ws.whl \
+ && mkdir -p /opt/websockify \
+ && unzip -q /tmp/ws.whl -d /opt/websockify \
+ && rm -rf /tmp/novnc.tgz /tmp/novncpkg /tmp/ws.whl
 
 # Chromium (real build from Chrome for Testing; the Ubuntu package is a snap stub that does not work in Docker)
 RUN curl -fsSL https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json -o /tmp/cft.json \
@@ -91,6 +93,7 @@ WORKDIR /workspace
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
+COPY vnc_lite.html /opt/novnc/vnc_lite.html
 COPY daemon/daemon.py /opt/daemon.py
 
 EXPOSE 6080 8095

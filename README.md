@@ -10,7 +10,7 @@ and disposable.
 
 ## Features
 
-- **Everything in a browser** — noVNC at `http://localhost:6080/vnc.html`; no VNC client needed
+- **Everything in a browser** — noVNC lite at `http://localhost:6080/vnc_lite.html`; no VNC client needed
 - **Small image** — Debian slim base, one apt layer with `--no-install-recommends`, docs/man purged, no snap stubs (real Chrome-for-Testing build)
 - **Fast** — boots in seconds; Xvfb + XFCE on a slim base instead of a heavyweight install
 - **Automatable** — every GUI action is a CLI one-liner (`xdotool`, `import`, `pkill`) over `docker exec`
@@ -39,7 +39,7 @@ builds are cached. Wait until it's healthy:
 docker compose ps          # STATUS should become "healthy"
 ```
 
-Then open **http://localhost:6080/vnc.html** in your browser. You get the
+Then open **http://localhost:6080/vnc_lite.html** in your browser. You get the
 remote desktop directly — a full XFCE desktop with a panel, whisker menu and
 desktop icons; terminals via the menu.
 
