@@ -23,12 +23,33 @@ export interface CreateOptions {
 }
 
 export interface LiveOptions {
-  /** HTTP port for the MJPEG stream, default 8090 */
+  /** HTTP port for the MJPEG stream, default 8090. 0 picks a free port. */
   port?: number;
   /** Frames per second (1-10), default 4 */
   fps?: number;
   /** JPEG quality (1-95), default 70 */
   quality?: number;
+}
+
+export interface TypeOptions {
+  /** Keystroke delay in ms (0-500), default 30 */
+  delayMs?: number;
+}
+
+export interface ObserveOptions {
+  /** Target width in px, aspect preserved. Default 1152. */
+  width?: number;
+  /** JPEG quality 1-95. Default 60. */
+  quality?: number;
+}
+
+export interface ObserveResult {
+  /** Scaled JPEG frame bytes. */
+  jpeg: Buffer;
+  /** Raw base64 of the JPEG, ready for vision-model file parts. */
+  base64: string;
+  /** data:image/jpeg;base64,... data URI form of the same frame. */
+  dataUri: string;
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000;
@@ -158,6 +179,82 @@ export class Desktop {
     );
   }
 
+  /** Move the pointer to absolute screen coordinates (x, y). */
+  async mouse(x: number, y: number): Promise<void> {
+    await docker(
+      ["exec", this.container, "xdotool", "mousemove", String(x), String(y)],
+      DEFAULT_TIMEOUT_MS
+    );
+  }
+
+  /**
+   * Click a mouse button, optionally after moving to (x, y).
+   * Buttons: 1 left, 2 middle, 3 right, 4/5 wheel.
+   */
+  async click(button = 1, x?: number, y?: number): Promise<void> {
+    const args = ["exec", this.container, "xdotool"];
+    if (x !== undefined && y !== undefined) {
+      args.push("mousemove", String(x), String(y));
+    }
+    args.push("click", String(button));
+    await docker(args, DEFAULT_TIMEOUT_MS);
+  }
+
+  /**
+   * Type text into the currently focused window. The text travels in an env
+   * var, so any character is safe (no shell quoting issues).
+   */
+  async type(text: string, opts: TypeOptions = {}): Promise<void> {
+    const delayMs = Math.min(Math.max(opts.delayMs ?? 30, 0), 500);
+    await new Promise<void>((resolve, reject) => {
+      execFile(
+        "docker",
+        [
+          "exec",
+          "-e",
+          `TEXT=${text}`,
+          "-e",
+          `DELAY=${delayMs}`,
+          this.container,
+          "bash",
+          "-c",
+          'xdotool type --delay "$DELAY" -- "$TEXT"',
+        ],
+        { timeout: DEFAULT_TIMEOUT_MS },
+        (err) => (err ? reject(new Error(`xdotool type failed: ${err.message}`)) : resolve())
+      );
+    });
+  }
+
+  /** Send a key or modifier combo, e.g. "Return", "ctrl+shift+t", "Super_L". */
+  async key(keys: string): Promise<void> {
+    await docker(["exec", this.container, "xdotool", "key", keys], DEFAULT_TIMEOUT_MS);
+  }
+
+  /** List visible window names on the desktop. */
+  async windows(): Promise<string[]> {
+    const out = await docker(
+      [
+        "exec",
+        this.container,
+        "bash",
+        "-c",
+        'xdotool search --onlyvisible --name ".*" getwindowname 2>/dev/null || true',
+      ],
+      DEFAULT_TIMEOUT_MS
+    );
+    return out.split("\n").map((s) => s.trim()).filter(Boolean);
+  }
+
+  /** True when the XFCE desktop is running inside the container. */
+  async health(): Promise<boolean> {
+    try {
+      return (await this.cmd("pgrep -f xfce4-session >/dev/null && echo ok")) === "ok";
+    } catch {
+      return false;
+    }
+  }
+
   /**
    * Capture the desktop as PNG. The file is written to the shared /workspace
    * and the returned path is the host-side location. Returns the host path.
@@ -170,6 +267,42 @@ export class Desktop {
       DEFAULT_TIMEOUT_MS
     );
     return path.join(this.workspace, file);
+  }
+
+  /**
+   * One scaled JPEG frame of the desktop (resize + recompress inside the
+   * container in a single pipeline) plus base64 forms — the cheap way to feed
+   * the screen to a vision model or stash a thumbnail.
+   */
+  async observe(opts: ObserveOptions = {}): Promise<ObserveResult> {
+    const width = Math.min(Math.max(Math.round(opts.width ?? 1152), 320), 1600);
+    const quality = Math.min(Math.max(opts.quality ?? 60, 1), 95);
+    const jpeg = await new Promise<Buffer>((resolve, reject) => {
+      const child = spawn(
+        "docker",
+        [
+          "exec",
+          this.container,
+          "bash",
+          "-c",
+          `import -window root -display ${this.display} jpg:- | convert - -resize ${width}x -quality ${quality} jpg:-`,
+        ],
+        { stdio: ["ignore", "pipe", "pipe"] }
+      );
+      const chunks: Buffer[] = [];
+      child.stdout.on("data", (c: Buffer) => chunks.push(c));
+      child.stderr.on("data", () => {});
+      child.on("error", (err) => reject(err));
+      child.on("close", (code) => {
+        if (code === 0) resolve(Buffer.concat(chunks));
+        else reject(new Error(`observe failed (exit ${code}); is the container up?`));
+      });
+    });
+    return {
+      jpeg,
+      base64: jpeg.toString("base64"),
+      dataUri: `data:image/jpeg;base64,${jpeg.toString("base64")}`,
+    };
   }
 
   /**
@@ -236,7 +369,9 @@ export class Desktop {
       server.once("error", reject);
       server.listen(port, resolve);
     });
-    return new LiveFeed(server, port);
+    const addr = server.address();
+    const actualPort = typeof addr === "object" && addr ? addr.port : port;
+    return new LiveFeed(server, actualPort);
   }
 }
 
