@@ -150,28 +150,6 @@ export function Workspace({ model }: { model: string }) {
 
   return (
     <div className="flex h-dvh flex-col bg-zinc-950 text-zinc-100">
-      {/* ── header ─────────────────────────────────────────── */}
-      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-zinc-800/80 px-4">
-        <div className="grid size-8 place-items-center rounded-lg bg-amber-400 font-mono text-sm font-bold text-zinc-950">
-          e
-        </div>
-        <div className="leading-tight">
-          <p className="font-mono text-[13px] font-semibold tracking-tight">eve</p>
-          <p className="text-[11px] text-zinc-500">desktop operator</p>
-        </div>
-        <div className="ml-auto flex items-center gap-2.5">
-          <span className="hidden items-center gap-1.5 rounded-md border border-zinc-800 bg-zinc-900/60 px-2 py-1 font-mono text-[11px] text-zinc-400 sm:flex">
-            <span className="size-1 rounded-full bg-zinc-500" />
-            {model}
-          </span>
-          <span className="flex items-center gap-1.5 rounded-md border border-zinc-800 bg-zinc-900/60 px-2 py-1 font-mono text-[11px] text-zinc-300">
-            <span className={cn("size-1.5 rounded-full", statusDot)} />
-            {statusLabel}
-          </span>
-        </div>
-      </header>
-
-      {/* ── body ───────────────────────────────────────────── */}
       <main className="flex min-h-0 flex-1">
         {mounted ? (
           <ResizablePanelGroup orientation="horizontal" defaultLayout={{ chat: 34, screen: 66 }}>
@@ -244,22 +222,19 @@ export function Workspace({ model }: { model: string }) {
                   const isStreaming = busy && m.id === lastMsg?.id;
                   return (
                     <article key={m.id} className="flex justify-start">
-                      <div className="w-full max-w-full rounded-2xl rounded-tl-md bg-zinc-900/60 ring-1 ring-zinc-800/70">
-                        <div className="flex items-center gap-2 px-3.5 pt-2.5">
-                          <span className="grid size-5 place-items-center rounded-md bg-amber-400/15 font-mono text-[10px] font-bold text-amber-400">
-                            e
-                          </span>
+                      <div className="w-full max-w-full">
+                        <div className="flex items-center gap-2">
                           <span className="text-xs font-medium text-zinc-200">eve</span>
                           <span className="text-[10px] tabular-nums text-zinc-500">
                             {ts()}
                           </span>
                         </div>
-                        <div className="space-y-2.5 px-3.5 pb-3 pt-2">
+                        <div className="space-y-1 pt-2">
                           {m.parts.map((part: any, i: number) => {
                             switch (part.type) {
                               case "text":
                                 return (
-                                  <p className="text-sm leading-relaxed text-zinc-200" key={i}>
+                                  <p className="text-xs leading-relaxed text-zinc-200" key={i}>
                                     {part.text}
                                     {isStreaming && i === m.parts.length - 1 && (
                                       <span className="animate-blink ml-0.5 inline-block h-3 w-0.5 translate-y-px rounded-sm bg-zinc-400 align-middle" />
@@ -268,12 +243,17 @@ export function Workspace({ model }: { model: string }) {
                                 );
                               case "reasoning":
                                 return (
+                                  <details>
+                                    <summary className="text-xs text-zinc-500 cursor-pointer select-none">
+                                      Thinking...
+                                    </summary>
                                   <pre
                                     className="whitespace-pre-wrap border-l-2 border-zinc-700 pl-2.5 font-mono text-[11px] leading-relaxed text-zinc-500"
                                     key={i}
                                   >
                                     {(part.text ?? part.reasoning ?? "").slice(0, 400)}
                                   </pre>
+                                  </details>
                                 );
                               case "tool-invocation": {
                                 const ti = part.toolInvocation;
@@ -378,7 +358,7 @@ export function Workspace({ model }: { model: string }) {
                         send(draft);
                       }
                     }}
-                    className="min-h-[48px] w-full resize-none rounded-xl border border-zinc-800 bg-zinc-900/60 pb-10 pl-3.5 pr-12 pt-2.5 text-sm leading-relaxed text-zinc-100 placeholder:text-zinc-500 transition-colors focus:border-zinc-700 focus:outline-none focus:ring-1 focus:ring-amber-400/30 disabled:opacity-60"
+                    className="min-h-[48px] w-full resize-none rounded-xl border border-zinc-800 bg-zinc-900/60 pb-10 pl-3.5 pr-12 pt-2.5 text-sm leading-relaxed text-zinc-100 placeholder:text-zinc-500 transition-colors focus:border-zinc-700 focus:outline-none disabled:opacity-60"
                   />
                   {busy ? (
                     <button
@@ -386,7 +366,7 @@ export function Workspace({ model }: { model: string }) {
                       title="Stop"
                       aria-label="Stop"
                       onClick={() => void agent.cancel()}
-                      className="absolute bottom-2 right-2 grid size-8 place-items-center rounded-lg border border-zinc-700 bg-zinc-900 text-zinc-300 transition-colors hover:border-zinc-600 hover:text-white"
+                      className="absolute bottom-4 right-2 grid size-8 place-items-center rounded-lg border border-zinc-700 bg-zinc-900 text-zinc-300 transition-colors hover:border-zinc-600 hover:text-white"
                     >
                       <Square className="size-3.5" />
                     </button>
@@ -396,16 +376,13 @@ export function Workspace({ model }: { model: string }) {
                       title="Send"
                       aria-label="Send"
                       disabled={!draft.trim()}
-                      className="absolute bottom-2 right-2 grid size-8 place-items-center rounded-lg bg-amber-400 text-zinc-950 transition-all hover:bg-amber-300 disabled:bg-zinc-800 disabled:text-zinc-600"
+                      className="absolute bottom-4 right-2 grid size-8 place-items-center rounded-lg bg-amber-400 text-zinc-950 transition-all hover:bg-amber-300 disabled:bg-zinc-800 disabled:text-zinc-600"
                     >
                       <Send className="size-3.5" />
                     </button>
                   )}
                 </div>
               </form>
-              <p className="mt-2 px-1 text-center text-[11px] text-zinc-600">
-                Enter to send · shift+enter for a new line
-              </p>
             </div>
           </ResizablePanel>
 
