@@ -1,7 +1,7 @@
 {
   "name": "computer-use-sdk",
   "version": "0.1.0",
-  "description": "Minimal TS SDK to drive the Docker Linux desktop: run commands, create/kill apps, screenshot",
+  "description": "TS wrapper for the in-container desktop daemon — pick a computer by port, no docker CLI",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

@@ -2,3 +2,5 @@
 .eve
 node_modules
 bun.lock
+.vercel
+.env*

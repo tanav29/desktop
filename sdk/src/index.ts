@@ -1,19 +1,22 @@
-import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import path from "node:path";
 
 export interface DesktopOptions {
-  /** Docker container name, default "linux-desktop" */
-  container?: string;
-  /** X display used inside the container, default ":99" */
-  display?: string;
-  /** Host path of the mounted workspace, default "./workspace" */
+  /**
+   * Which computer to control. Every computer runs its own daemon
+   * (`daemon/daemon.py`) inside its container, published on a distinct host
+   * port in docker-compose: 8095 = first, 8096 = second, ... Default 8095.
+   */
+  port?: number;
+  /** Host running the daemon, default "localhost". */
+  host?: string;
+  /** Host path of the computer's mounted workspace, default "./workspace". */
   workspace?: string;
 }
 
 export interface CmdOptions {
-  /** Kill the docker exec after this many ms. Default 2 min. */
+  /** Kill the command after this many ms. Default 2 min. */
   timeoutMs?: number;
 }
 
@@ -53,46 +56,65 @@ export interface ObserveResult {
 }
 
 const DEFAULT_TIMEOUT_MS = 120_000;
+const DEFAULT_PORT = 8095;
 const IN_CONTAINER_WORKSPACE = "/workspace";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-function captureJpeg(container: string, display: string, quality: number): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(
-      "docker",
-      ["exec", container, "import", "-window", "root", "-display", display, "-quality", String(quality), "jpg:-"],
-      { stdio: ["ignore", "pipe", "pipe"] }
-    );
-    const chunks: Buffer[] = [];
-    child.stdout.on("data", (c: Buffer) => chunks.push(c));
-    child.stderr.on("data", () => {});
-    child.on("error", (err) => reject(err));
-    child.on("close", (code) => {
-      if (code === 0) resolve(Buffer.concat(chunks));
-      else reject(new Error(`import failed (exit ${code}); is the container up?`));
-    });
-  });
+interface ApiJson {
+  status: number;
+  json: any;
+  text: string;
 }
 
-function docker(args: string[], timeoutMs: number): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      "docker",
-      args,
-      { timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 },
-      (err, stdout, stderr) => {
-        if (err) {
-          const die = (s: string) =>
-            reject(new Error(`docker ${args.join(" ")}\n${s}`));
-          const code = typeof err.code === "number" ? `exit ${err.code}` : err.code;
-          if (stderr.trim()) return die(`[${code}] ${stderr.trim()}`);
-          if (stdout.trim()) return die(`[${code}] ${stdout.trim()}`);
-          return die(err.message);
-        }
-        resolve(stdout);
-      }
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** HTTP client for a computer's daemon (daemon/daemon.py). */
+class ApiClient {
+  constructor(readonly baseUrl: string) {}
+
+  async health(): Promise<boolean> {
+    try {
+      const res = await fetchWithTimeout(`${this.baseUrl}/api/health`, {}, 1000);
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  async post(path: string, body: unknown, timeoutMs: number): Promise<ApiJson> {
+    const res = await fetchWithTimeout(
+      `${this.baseUrl}${path}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      },
+      timeoutMs
     );
-  });
+    const text = await res.text();
+    let json: any = null;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      /* non-JSON body */
+    }
+    if (!res.ok && !json) throw new Error(`HTTP ${res.status} ${path}: ${text.slice(0, 500)}`);
+    return { status: res.status, json, text };
+  }
+
+  async getBuffer(path: string, timeoutMs = 60_000): Promise<Buffer> {
+    const res = await fetchWithTimeout(`${this.baseUrl}${path}`, {}, timeoutMs);
+    if (!res.ok) throw new Error(`HTTP ${res.status} ${path}: ${(await res.text()).slice(0, 500)}`);
+    return Buffer.from(await res.arrayBuffer());
+  }
 }
 
 function genTitle(): string {
@@ -105,30 +127,51 @@ function assertSafeTitle(title: string): void {
   }
 }
 
-/** Regex-escape, then wrap the last char in [] so pkill -f can never match its own shell. */
-function pidPattern(title: string): string {
-  const esc = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return esc.length < 2 ? esc : esc.slice(0, -1) + "[" + esc.at(-1) + "]";
-}
-
+/**
+ * Wrapper around a computer's in-container daemon. Pick the computer by port:
+ * `new Desktop({ port: 8095 })` is computer #1, `{ port: 8096 }` is #2, etc.
+ * No docker CLI involved — every call is one HTTP round-trip to the daemon.
+ */
 export class Desktop {
-  readonly container: string;
-  readonly display: string;
+  /** Host port the computer's daemon is published on. */
+  readonly port: number;
+  /** Host the daemon runs on, default "localhost". */
+  readonly host: string;
+  /** Base URL of the computer's daemon, e.g. http://localhost:8095. */
+  readonly baseUrl: string;
+  /** Host path of the computer's mounted workspace. */
   readonly workspace: string;
+  private readonly api: ApiClient;
 
   constructor(opts: DesktopOptions = {}) {
-    this.container = opts.container ?? "linux-desktop";
-    this.display = opts.display ?? ":99";
+    this.port = opts.port ?? DEFAULT_PORT;
+    this.host = opts.host ?? "localhost";
+    this.baseUrl = `http://${this.host}:${this.port}`;
     this.workspace = path.resolve(opts.workspace ?? "./workspace");
+    this.api = new ApiClient(this.baseUrl);
   }
 
-  /** Run a shell command inside the container. Returns trimmed stdout. */
+  /** POST to the daemon and throw on a non-zero command exit. Returns trimmed stdout. */
+  private async postX(route: string, body: unknown, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<string> {
+    const { json } = await this.api.post(route, body, timeoutMs);
+    const exit = json?.exit ?? 0;
+    if (exit !== 0) {
+      const note = (json?.stderr || json?.stdout || `exit ${exit}`).trim();
+      throw new Error(`${route} failed [exit ${exit}]: ${note}`);
+    }
+    return String(json?.stdout ?? "");
+  }
+
+  /** Run a shell command inside the computer. Returns trimmed stdout. */
   async cmd(input: string, opts: CmdOptions = {}): Promise<string> {
-    const out = await docker(
-      ["exec", this.container, "bash", "-c", input],
-      opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
-    );
-    return out.trim();
+    const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const { json } = await this.api.post("/api/cmd", { cmd: input, timeoutMs }, timeoutMs);
+    const exit = json?.exit ?? -1;
+    if (exit !== 0) {
+      const note = (json?.stderr || json?.stdout || `exit ${exit}`).trim();
+      throw new Error(`cmd failed [exit ${exit}]: ${note}`);
+    }
+    return String(json?.stdout ?? "").trim();
   }
 
   /**
@@ -150,41 +193,21 @@ export class Desktop {
           ? `--user-data-dir=${IN_CONTAINER_WORKSPACE}/.workers/${title}`
           : `--title=${title}`;
 
-    await docker(
-      [
-        "exec",
-        "-d",
-        this.container,
-        "bash",
-        "-c",
-        `DISPLAY=${this.display} ${command.trim()} ${flag}`.trim(),
-      ],
-      DEFAULT_TIMEOUT_MS
-    );
+    const full = `${command.trim()} ${flag}`.trim();
+    const { json } = await this.api.post("/api/create", { command: full, title }, DEFAULT_TIMEOUT_MS);
+    if (json?.error) throw new Error(`create failed: ${json.error}`);
     return title;
   }
 
   /** Kill every process whose command line or window title matches `title`. */
   async kill(title: string): Promise<void> {
     assertSafeTitle(title);
-    await docker(
-      [
-        "exec",
-        this.container,
-        "bash",
-        "-c",
-        `pkill -f '${pidPattern(title)}' || true; xdotool search --name '${pidPattern(title)}' windowkill 2>/dev/null || true`,
-      ],
-      DEFAULT_TIMEOUT_MS
-    );
+    await this.api.post("/api/kill", { title }, DEFAULT_TIMEOUT_MS);
   }
 
   /** Move the pointer to absolute screen coordinates (x, y). */
   async mouse(x: number, y: number): Promise<void> {
-    await docker(
-      ["exec", this.container, "xdotool", "mousemove", String(x), String(y)],
-      DEFAULT_TIMEOUT_MS
-    );
+    await this.postX("/api/mouse", { x, y });
   }
 
   /**
@@ -192,12 +215,7 @@ export class Desktop {
    * Buttons: 1 left, 2 middle, 3 right, 4/5 wheel.
    */
   async click(button = 1, x?: number, y?: number): Promise<void> {
-    const args = ["exec", this.container, "xdotool"];
-    if (x !== undefined && y !== undefined) {
-      args.push("mousemove", String(x), String(y));
-    }
-    args.push("click", String(button));
-    await docker(args, DEFAULT_TIMEOUT_MS);
+    await this.postX("/api/click", { button, x, y });
   }
 
   /**
@@ -206,98 +224,48 @@ export class Desktop {
    */
   async type(text: string, opts: TypeOptions = {}): Promise<void> {
     const delayMs = Math.min(Math.max(opts.delayMs ?? 30, 0), 500);
-    await new Promise<void>((resolve, reject) => {
-      execFile(
-        "docker",
-        [
-          "exec",
-          "-e",
-          `TEXT=${text}`,
-          "-e",
-          `DELAY=${delayMs}`,
-          this.container,
-          "bash",
-          "-c",
-          'xdotool type --delay "$DELAY" -- "$TEXT"',
-        ],
-        { timeout: DEFAULT_TIMEOUT_MS },
-        (err) => (err ? reject(new Error(`xdotool type failed: ${err.message}`)) : resolve())
-      );
-    });
+    await this.postX("/api/type", { text, delayMs });
   }
 
   /** Send a key or modifier combo, e.g. "Return", "ctrl+shift+t", "Super_L". */
   async key(keys: string): Promise<void> {
-    await docker(["exec", this.container, "xdotool", "key", keys], DEFAULT_TIMEOUT_MS);
+    await this.postX("/api/key", { keys });
   }
 
   /** List visible window names on the desktop. */
   async windows(): Promise<string[]> {
-    const out = await docker(
-      [
-        "exec",
-        this.container,
-        "bash",
-        "-c",
-        'xdotool search --onlyvisible --name ".*" getwindowname 2>/dev/null || true',
-      ],
-      DEFAULT_TIMEOUT_MS
-    );
-    return out.split("\n").map((s) => s.trim()).filter(Boolean);
+    const { json } = await this.api.post("/api/windows", {}, DEFAULT_TIMEOUT_MS);
+    return Array.isArray(json?.windows) ? json.windows.map(String) : [];
   }
 
-  /** True when the XFCE desktop is running inside the container. */
+  /** True when the computer's desktop is up. */
   async health(): Promise<boolean> {
-    try {
-      return (await this.cmd("pgrep -f xfce4-session >/dev/null && echo ok")) === "ok";
-    } catch {
-      return false;
-    }
+    return this.api.health();
   }
 
   /**
-   * Capture the desktop as PNG. The file is written to the shared /workspace
-   * and the returned path is the host-side location. Returns the host path.
+   * Capture the desktop as PNG. The daemon writes the file into the computer's
+   * /workspace; returns the host-side path of the same mounted folder.
    */
   async screenshot(name = `shot-${Date.now()}.png`): Promise<string> {
     const file = path.extname(name) ? path.basename(name) : `${path.basename(name)}.png`;
-    const remote = `${IN_CONTAINER_WORKSPACE}/${file}`;
-    await docker(
-      ["exec", this.container, "import", "-window", "root", "-display", this.display, remote],
-      DEFAULT_TIMEOUT_MS
-    );
+    const { json } = await this.api.post("/api/screenshot", { name: file }, DEFAULT_TIMEOUT_MS);
+    const exit = json?.exit ?? -1;
+    if (exit !== 0) {
+      throw new Error(`screenshot failed [exit ${exit}]: ${(json?.stderr ?? "").trim()}`);
+    }
     return path.join(this.workspace, file);
   }
 
   /**
-   * One scaled JPEG frame of the desktop (resize + recompress inside the
-   * container in a single pipeline) plus base64 forms — the cheap way to feed
-   * the screen to a vision model or stash a thumbnail.
+   * One scaled JPEG frame of the desktop (resize + recompress in the daemon)
+   * plus base64 forms — the cheap way to feed the screen to a vision model.
    */
   async observe(opts: ObserveOptions = {}): Promise<ObserveResult> {
-    const width = Math.min(Math.max(Math.round(opts.width ?? 1152), 320), 1600);
+    const width = Math.max(0, Math.round(opts.width ?? 1152));
+    const w = width > 0 ? Math.min(Math.max(width, 320), 1600) : 0;
     const quality = Math.min(Math.max(opts.quality ?? 60, 1), 95);
-    const jpeg = await new Promise<Buffer>((resolve, reject) => {
-      const child = spawn(
-        "docker",
-        [
-          "exec",
-          this.container,
-          "bash",
-          "-c",
-          `import -window root -display ${this.display} jpg:- | convert - -resize ${width}x -quality ${quality} jpg:-`,
-        ],
-        { stdio: ["ignore", "pipe", "pipe"] }
-      );
-      const chunks: Buffer[] = [];
-      child.stdout.on("data", (c: Buffer) => chunks.push(c));
-      child.stderr.on("data", () => {});
-      child.on("error", (err) => reject(err));
-      child.on("close", (code) => {
-        if (code === 0) resolve(Buffer.concat(chunks));
-        else reject(new Error(`observe failed (exit ${code}); is the container up?`));
-      });
-    });
+    const jpeg = await this.capture(quality, w);
     return {
       jpeg,
       base64: jpeg.toString("base64"),
@@ -305,17 +273,22 @@ export class Desktop {
     };
   }
 
+  /** One JPEG frame (resized when width>0) from the daemon. */
+  private async capture(quality: number, width: number): Promise<Buffer> {
+    return this.api.getBuffer(`/api/observe?quality=${quality}&width=${width}`);
+  }
+
   /**
-   * Live JPEG frames of the desktop as an async generator — poll the X
-   * framebuffer via `import` and convert to JPEG in the container. Yield
-   * a Buffer per frame (~150-300 ms each, so fps above ~4 doesn't gain
-   * much). Stops when the generator is returned or closed.
+   * Live JPEG frames of the desktop as an async generator — the daemon
+   * captures the X framebuffer and recompresses to JPEG per frame
+   * (~150-300 ms each, so fps above ~4 doesn't gain much). Stops when the
+   * generator is returned or closed.
    */
   async *frames(opts: LiveOptions = {}): AsyncGenerator<Buffer> {
     const fps = Math.min(Math.max(opts.fps ?? 4, 1), 10);
     const quality = Math.min(Math.max(opts.quality ?? 70, 1), 95);
     while (true) {
-      const frame = await captureJpeg(this.container, this.display, quality);
+      const frame = await this.capture(quality, 0);
       yield frame;
       await sleep(1000 / fps);
     }

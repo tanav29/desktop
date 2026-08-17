@@ -6,11 +6,11 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   try {
     const ok = await computer.health();
-    return Response.json({ ok, container: computer.container, model: MODEL });
+    return Response.json({ ok, port: computer.port, model: MODEL });
   } catch (err) {
     return Response.json({
       ok: false,
-      container: computer.container,
+      port: computer.port,
       model: MODEL,
       error: (err as Error).message,
     });

@@ -21,6 +21,7 @@ import {
   Square,
   X,
 } from "lucide-react";
+import Markdown from 'react-markdown'
 
 const SUGGESTIONS = [
   "Open a terminal and run htop so I can watch it",
@@ -213,7 +214,7 @@ export function Workspace({ model }: { model: string }) {
                     if (!txt) return null;
                     return (
                       <div key={m.id} className="flex justify-end">
-                        <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-zinc-100 px-3.5 py-2 text-sm leading-relaxed text-zinc-900">
+                        <div className="max-w-[85%] typeset typeset-docs whitespace-pre-wrap rounded-2xl rounded-br-md bg-zinc-100 px-3.5 py-2 text-sm leading-relaxed text-zinc-900">
                           {txt}
                         </div>
                       </div>
@@ -234,8 +235,10 @@ export function Workspace({ model }: { model: string }) {
                             switch (part.type) {
                               case "text":
                                 return (
-                                  <p className="text-xs leading-relaxed text-zinc-200" key={i}>
-                                    {part.text}
+                                  <p className="text-xs leading-relaxed text-zinc-200 typeset typeset-docs" key={i}>
+                                    <Markdown>
+                                      {part.text}
+                                    </Markdown>
                                     {isStreaming && i === m.parts.length - 1 && (
                                       <span className="animate-blink ml-0.5 inline-block h-3 w-0.5 translate-y-px rounded-sm bg-zinc-400 align-middle" />
                                     )}

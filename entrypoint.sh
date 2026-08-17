@@ -33,8 +33,12 @@ echo "[entrypoint] Starting noVNC on 6080"
 /opt/websockify/run --web /opt/novnc 6080 localhost:5900 &
 WEBSOCKIFY_PID=$!
 
+echo "[entrypoint] Starting HTTP API on 8095"
+python3 /opt/daemon.py &
+API_PID=$!
+
 cleanup() {
-    kill "${WEBSOCKIFY_PID}" "${X11VNC_PID}" "${SESSION_PID}" "${XVFB_PID}" 2>/dev/null || true
+    kill "${API_PID}" "${WEBSOCKIFY_PID}" "${X11VNC_PID}" "${SESSION_PID}" "${XVFB_PID}" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 

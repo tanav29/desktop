@@ -4,6 +4,7 @@ services:
     container_name: linux-desktop
     ports:
       - "6080:6080"
+      - "8095:8095"
     volumes:
       - ./workspace:/workspace
     environment:
@@ -13,7 +14,7 @@ services:
     mem_limit: 3g
     cpus: 2
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:6080/vnc.html"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:6080/vnc.html >/dev/null && curl -fsS http://127.0.0.1:8095/api/health >/dev/null"]
       interval: 30s
       timeout: 5s
       retries: 3

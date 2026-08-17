@@ -69,8 +69,11 @@ docker compose logs -f     # entrypoint log (Xvfb → XFCE → x11vnc → websoc
 
 ## 2 · Try the SDK
 
-The SDK in `sdk/` is the full control plane: four methods, each a thin wrapper
-around `docker exec`. Build it, run the canned smoke test, then write your own script.
+The SDK in `sdk/` is a thin TypeScript wrapper around the in-container HTTP
+daemon (`daemon/daemon.py`, published on port 8095). Pick a computer by its
+port — `new Desktop({ port: 8095 })` is computer #1, `8096` is #2, etc. No
+`docker exec` in the hot path: every call is one HTTP round-trip to a process
+that is already running.
 
 ```bash
 cd sdk
@@ -86,14 +89,15 @@ Your own script:
 
 ```ts
 import { Desktop, computer } from "computer-use-sdk";
-// computer = new Desktop() — points at container "linux-desktop", /workspace mount
+// computer = new Desktop() — computer #1 (daemon on port 8095); the
+// second computer in your compose file is new Desktop({ port: 8096 })
 
 const d = computer;
 
 await d.cmd("pgrep -f xfce4-session");                  // desktop health
 await d.create("xfce4-terminal", { title: "worker-1" });  // launch an app
 
-// focus → type → screenshot → kill, all via docker exec
+// focus → type → screenshot → kill, all via the daemon
 await d.cmd(
   'wid=$(xdotool search --onlyvisible --name worker-1 | head -1); ' +
   'xdotool windowactivate --sync "$wid"; ' +
@@ -107,7 +111,7 @@ API (see [`sdk/README.md`](sdk/README.md) for details):
 
 | Method | What it does |
 |---|---|
-| `cmd(input)` | run any shell command inside the container, return stdout |
+| `cmd(input)` | run any shell command inside the computer, return stdout |
 | `create(command, {title})` | launch a detached app with a unique title (terminal `--title`, chromium `--user-data-dir`) |
 | `kill(title)` | kill by process command line **and** window title |
 | `screenshot(name?)` | capture desktop PNG into the shared `./workspace` |
@@ -119,13 +123,15 @@ API (see [`sdk/README.md`](sdk/README.md) for details):
 ```
 computer/
 ├── Dockerfile          # Debian 13 slim + XFCE + Xvfb + noVNC + Chromium + toolchain
-├── docker-compose.yml  # port 6080, ./workspace mount, 2 CPU / 3 GB caps, healthcheck
-├── entrypoint.sh       # starts Xvfb → XFCE → x11vnc → websockify
+├── docker-compose.yml  # port 6080 + 8095, ./workspace mount, 2 CPU / 3 GB caps, healthcheck
+├── entrypoint.sh       # starts Xvfb → XFCE → x11vnc → websockify → HTTP API daemon
+├── daemon/
+│   └── daemon.py       # in-container HTTP API (COPY'd into the image, port 8095)
 ├── guide.md            # full xdotool automation reference (keyboard/mouse/windows)
 ├── workspace/          # shared folder: screenshots, files (persists between runs)
 ├── sdk/
-│   ├── src/index.ts    # Desktop class (cmd / create / kill / screenshot / live)
-│   ├── smoke.mjs       # end-to-end demo against a running container
+│   ├── src/index.ts    # wrapper over the daemon (Desktop class; pick computer by port)
+│   ├── smoke.mjs       # end-to-end demo against a running computer
 │   ├── live.mjs        # `node live.mjs` → desktop live view in the browser
 │   └── README.md       # SDK usage guide
 └── README.md

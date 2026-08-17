@@ -91,6 +91,8 @@ WORKDIR /workspace
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-EXPOSE 6080
+COPY daemon/daemon.py /opt/daemon.py
+
+EXPOSE 6080 8095
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
