@@ -1,8 +1,8 @@
-# Linux Desktop in Docker + TypeScript SDK
+# Desktop
 
-A lightweight Linux desktop that runs **entirely inside Docker** and is driven
-from your machine — open the desktop in your browser, automate it with
-`xdotool` one-liners, or use the tiny TypeScript SDK.
+<img width="1681" height="1031" alt="image" src="https://github.com/user-attachments/assets/a7186eb8-fce0-4fb5-9ab9-87c14832f80c" />
+
+A lightweight Linux desktop that runs **entirely inside Docker** and is driven has a http daemon that will be used to run commands and a typescript sdk, all combined with eve agent to give a agentic experience. 
 
 Debian 13 (trixie) + XFCE on Xvfb, served through noVNC, preloaded with
 Chromium, a terminal, and a full agent toolchain. Designed to be small, fast,
