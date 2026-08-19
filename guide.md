@@ -44,7 +44,7 @@ The desktop is reachable at <http://localhost:6080/vnc.html>.
 
 | Category | Tools |
 |---|---|
-| Build | `gcc`, `g++`, `make` (build-essential) |
+| Build | not preinstalled — `apt-get install -y --no-install-recommends build-essential` if a task must compile |
 | Languages | python 3 |
 | Editor / shell | `nano`, `bash` (terminal: xfce4-terminal) |
 | VCS | `git` |
@@ -226,8 +226,8 @@ docker exec linux-desktop bash -c 'xdotool search --name "Terminal" windowactiva
 # screenshot
 docker exec linux-desktop import -window root -display :99 /workspace/shot.png
 
-# compile a quick C file (build-essential is installed)
-docker exec linux-desktop bash -c 'printf "int main(){return 0;}" > /workspace/t.c && gcc /workspace/t.c -o /workspace/t'
+# compile a quick C file (build-essential is NOT preinstalled; install on demand)
+docker exec linux-desktop bash -c 'apt-get install -y --no-install-recommends build-essential && printf "int main(){return 0;}" > /workspace/t.c && gcc /workspace/t.c -o /workspace/t'
 
 # launch / kill an app by title
 docker exec -d linux-desktop bash -c 'DISPLAY=:99 xfce4-terminal --title=worker-1'

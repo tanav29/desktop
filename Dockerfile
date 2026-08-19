@@ -11,7 +11,16 @@ RUN sed -i -e 's|http://deb.debian.org/debian-security|http://mirrors.ocf.berkel
            -e 's|http://deb.debian.org/debian|http://mirrors.edge.kernel.org/debian|g' \
            /etc/apt/sources.list.d/debian.sources
 
-# Minimal base: X server, VNC, native tools (installed in one layer, docs purged)
+# Minimal XFCE desktop + VNC + agent tooling, installed in one layer, docs purged.
+# Deliberately absent (packages removed in the slimming pass, docs updated):
+#   ffmpeg  - ~170 MB of libav/audio codec stack; nothing in the stack uses it
+#   build-essential - ~250 MB gcc/g++/binutils toolchain; nothing compiles in-image
+#   gh (GitHub CLI) - gh is a 43 MB binary; use git for push/PRs from the container
+#   thunar, mousepad - file manager + editor, ~20 MB; xfce4-terminal stays
+#   python3 -> python3-minimal - the daemon + websockify only need the stdlib
+# The Xorg GPU driver stack (mesa/LLVM, ~215 MB) is deleted below: Xvfb has no
+# GPU, Gtk renders with software Cairo, and Chromium bundles its own ANGLE +
+# SwiftShader (libvk_swiftshader.so stays), so nothing needs the DRI drivers.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         xvfb \
@@ -26,18 +35,14 @@ RUN apt-get update \
         xfdesktop4 \
         xfwm4 \
         xfce4-terminal \
-        thunar \
-        mousepad \
         x11-xserver-utils \
         fonts-dejavu-core \
         git \
         curl \
         ripgrep \
         nano \
-        python3 \
-        build-essential \
+        python3-minimal \
         imagemagick \
-        ffmpeg \
         ca-certificates \
         libnspr4 \
         libnss3 \
@@ -49,6 +54,7 @@ RUN apt-get update \
         libgbm1 \
         libgtk-3-0t64 \
         libpango-1.0-0 \
+        libudev1 \
         libxcomposite1 \
         libxdamage1 \
         libxfixes3 \
@@ -59,7 +65,13 @@ RUN apt-get update \
     && apt-get autoremove -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* \
-    && rm -rf /usr/share/doc /usr/share/man
+    && rm -rf /usr/share/doc /usr/share/man \
+    && rm -rf /usr/lib/x86_64-linux-gnu/dri \
+    && rm -f /usr/lib/x86_64-linux-gnu/libgallium-*.so \
+             /usr/lib/x86_64-linux-gnu/libLLVM*.so* \
+             /usr/lib/x86_64-linux-gnu/libz3.so* \
+             /usr/lib/x86_64-linux-gnu/libGLX_mesa* \
+             /usr/lib/x86_64-linux-gnu/libGLX_indirect*
 
 # noVNC (official release incl. built-in vnc.html viewer) + websockify wheel.
 # Using the PyPI wheel (stdlib-only) avoids apt's python3-websockify which
@@ -72,24 +84,21 @@ RUN curl -fsSL https://github.com/novnc/noVNC/archive/refs/tags/v1.5.0.tar.gz -o
  && python3 -c "import zipfile;zipfile.ZipFile('/tmp/ws.whl').extractall('/opt/websockify')" \
  && rm -rf /tmp/novnc.tgz /tmp/ws.whl
 
-# Chromium (real build from Chrome for Testing; the Ubuntu package is a snap stub that does not work in Docker)
+# Chromium (real build from Chrome for Testing; the Ubuntu package is a snap stub that does not work in Docker).
+# Slimmed: only the en-US locale pack stays (~50 MB of locale .pak files removed),
+# WidevineCdm is unused in CfT builds, and hyphen-data is text-hyphenation only.
 RUN curl -fsSL https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json -o /tmp/cft.json \
  && python3 -c "import json;d=json.load(open('/tmp/cft.json'));print([x['url'] for x in d['channels']['Stable']['downloads']['chrome'] if x['platform']=='linux64'][0])" > /tmp/chrome_url \
  && curl -fsSL "$(cat /tmp/chrome_url)" -o /tmp/chrome.zip \
  && python3 -c "import zipfile;zipfile.ZipFile('/tmp/chrome.zip').extractall('/opt')" \
  && mv /opt/chrome-linux64 /opt/chrome \
  && rm -f /opt/chrome/chrome_sandbox \
+ && chmod +x /opt/chrome/chrome /opt/chrome/chrome_crashpad_handler /opt/chrome/chrome-wrapper \
  && ln -s /opt/chrome/chrome /usr/local/bin/chromium \
+ && rm -rf /opt/chrome/WidevineCdm /opt/chrome/hyphen-data \
+ && cd /opt/chrome/locales \
+ && for f in *.pak; do [ "$f" = "en-US.pak" ] || rm -f "$f"; done \
  && rm -rf /tmp/*
-
-# GitHub CLI (for git push + PR creation from inside the container)
-RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
- && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
- && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
- && apt-get update \
- && apt-get install -y --no-install-recommends gh \
- && apt-get clean \
- && rm -rf /var/lib/apt/lists/*
 
 RUN printf '[Desktop Entry]\nType=Application\nName=Chromium\nComment=Web browser\nExec=/opt/chrome/chrome --no-sandbox --disable-dev-shm-usage --no-first-run %%U\nIcon=applications-internet\nTerminal=false\nCategories=Network;WebBrowser;\nMimeType=text/html;text/xml;application/xhtml+xml;\n' > /usr/share/applications/chromium.desktop \
  && chmod 644 /usr/share/applications/chromium.desktop \

@@ -65,7 +65,7 @@ cp .env.example .env
 # Fill in:
 #   SLACK_BOT_TOKEN=xoxb-...
 #   SLACK_SIGNING_SECRET=...
-#   GH_TOKEN=ghp_...  (GitHub PAT for PR creation)
+#   GH_TOKEN=ghp_...  (GitHub PAT for GitHub API / git auth in the container)
 ```
 
 ## 6. Invite the bot to a channel
@@ -99,6 +99,8 @@ The recording hook in `web/agent/hooks/recording.ts` captures desktop frames
 throughout the session and compiles them into a video on completion, then
 uploads it to Slack via `files.upload`.
 
-The git tools (`git_clone`, `git_commit`, `create_pr`) in `web/agent/tools/`
-run `git` and `gh` commands inside the desktop container via the existing
-`computer.cmd()` daemon API.
+The git tools (`git_clone`, `git_commit`) in `web/agent/tools/` run `git`
+commands inside the desktop container via the existing `computer.cmd()` daemon
+API. The slim image has no `gh` CLI by design — create PRs from the host with
+the GitHub web UI or API (`GH_TOKEN` is still injected into the container for
+API/`curl` use).

@@ -17,14 +17,16 @@ and disposable.
 - **Disposable** — `docker compose down && docker compose up -d` is a factory reset (your `./workspace` files persist)
 - **Capped** — 2 CPUs / 3 GB RAM limit in `docker-compose.yml` so it never eats your machine
 
-Included: Chromium, xfce4-terminal, xdotool, ImageMagick, ffmpeg, gh (GitHub
-CLI), git, curl, ripgrep, nano, python3, build-essential (gcc/g++/make).
+Included: Chromium, xfce4-terminal, xdotool, ImageMagick (`import`/`convert`),
+git, curl, ripgrep, nano, python3 (minimal). Slim by design — no ffmpeg, gh, or
+build-essential; run `apt-get install -y --no-install-recommends build-essential`
+(etc.) from inside the container if a task needs them.
 
 ## Requirements
 
 - **Docker** with the Compose plugin (Docker Desktop works on Windows/macOS; `docker compose version` must succeed)
 - **Node.js 18+** — only needed for the SDK part
-- ~2 GB free disk for the image
+- ~1.3 GB free disk for the image (image is ~1.1 GB on disk, ~0.3 GB when pulled)
 
 ## 1 · Try the desktop (image only)
 
@@ -158,7 +160,7 @@ cd web && bun install && bun run dev
 
 ```
 desktop/
-├── Dockerfile          # Debian 13 slim + XFCE + Xvfb + noVNC + Chromium + ffmpeg + gh + toolchain
+├── Dockerfile          # Debian 13 slim + XFCE + Xvfb + noVNC + Chromium + slim toolchain
 ├── docker-compose.yml  # port 6080 + 8095, ./workspace mount, 2 CPU / 3 GB caps, healthcheck
 ├── .env.example        # GitHub + Slack + AI model env vars
 ├── entrypoint.sh       # starts Xvfb → XFCE → x11vnc → websockify → HTTP API daemon
@@ -186,8 +188,7 @@ desktop/
 │   │       ├── type_text.ts, key.ts, mouse.ts, click.ts
 │   │       ├── create_app.ts, kill_app.ts, sleep.ts
 │   │       ├── git_clone.ts   # clone a repo into the desktop
-│   │       ├── git_commit.ts  # branch + commit changes
-│   │       └── create_pr.ts   # push + open a GitHub PR
+│   │       └── git_commit.ts  # branch + commit changes
 │   ├── app/                   # Next.js pages (chat UI + desktop view)
 │   ├── lib/                   # config, computer instance, feed helpers
 │   └── package.json

@@ -1,0 +1,7 @@
+# Files copied into the Docker image must have LF endings: a CRLF shebang in
+# entrypoint.sh makes the container fail to start with "env: 'bash\r'".
+*.sh text eol=lf
+*.py text eol=lf
+Dockerfile text eol=lf
+docker-compose.yml text eol=lf
+*.md text eol=lf

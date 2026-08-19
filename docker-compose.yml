@@ -10,7 +10,7 @@ services:
     environment:
       - DISPLAY=:99
       - RESOLUTION=1600x900
-      # GitHub token for git push + gh PR creation inside the container
+      # GitHub token for git auth + GitHub API calls inside the container
       - GH_TOKEN=${GH_TOKEN:-}
       - GITHUB_TOKEN=${GH_TOKEN:-}
       # Git identity for commits made by the agent

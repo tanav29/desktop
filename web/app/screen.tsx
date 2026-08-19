@@ -7,8 +7,10 @@ import { Camera, Maximize2, Minimize2, RefreshCw, WifiOff } from "lucide-react";
 
 type Health = { ok: boolean; model?: string; error?: string };
 
+// scale=true keeps the whole 1600x900 framebuffer visible by scaling it
+// (aspect-preserving) to fit the pane; x11vnc can't do remote resize.
 const VNC_URL =
-  "http://localhost:6080/vnc.html?autoconnect=true&path=websockify&resize=scale";
+  "http://localhost:6080/vnc_lite.html?autoconnect=true&path=websockify&scale=true";
 
 export function ScreenPane({ busy }: { busy: boolean }) {
   const [health, setHealth] = useState<Health | null>(null);

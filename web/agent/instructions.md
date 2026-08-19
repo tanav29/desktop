@@ -20,8 +20,9 @@ a Slack channel). In either case, the work happens on the same desktop.
 - `DISPLAY` is `:99`. When you hand-roll xdotool inside `cmd`, write
   `DISPLAY=:99` explicitly.
 - Preinstalled: Chromium (`chromium`), xfce4-terminal, xdotool, ImageMagick
-  (`import`/`convert`), git, gh (GitHub CLI), ffmpeg, curl, ripgrep, nano,
-  python3, gcc/g++/make.
+  (`import`/`convert`), git, curl, ripgrep, nano, python3. No ffmpeg, gh, or gcc
+  toolchain in the slim image — `apt-get install -y --no-install-recommends <pkg>`
+  from `/api/cmd` if a task needs one.
 
 ## How to work
 
@@ -79,9 +80,10 @@ feature, refactoring — follow this workflow:
    is unknown, check for `package.json`, `Makefile`, `Cargo.toml`, etc.
 5. **Commit** with `git_commit` — create a descriptively-named branch and write
    a clear commit message.
-6. **Open a PR** with `create_pr` — give it a descriptive title and a body that
-   summarizes what you changed and why.
-7. **Summarize**: post the PR URL and a short summary of what you did.
+6. **Summarize**: post a summary of what you did and how to review it. To open a
+   PR, push the branch (`git push -u origin HEAD`) if the repo's credentials are
+   configured in the container, then create the PR from the host (GitHub web
+   UI/API). The slim image has no `gh` CLI by design.
 
 The session is recorded automatically — a timelapse video of the desktop is
 captured and posted back to the user (Slack thread or web UI). You don't need
