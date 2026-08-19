@@ -10,11 +10,19 @@ services:
     environment:
       - DISPLAY=:99
       - RESOLUTION=1600x900
+      # GitHub token for git push + gh PR creation inside the container
+      - GH_TOKEN=${GH_TOKEN:-}
+      - GITHUB_TOKEN=${GH_TOKEN:-}
+      # Git identity for commits made by the agent
+      - GIT_AUTHOR_NAME=${GIT_AUTHOR_NAME:-eve-agent}
+      - GIT_AUTHOR_EMAIL=${GIT_AUTHOR_EMAIL:-eve@agent.local}
+      - GIT_COMMITTER_NAME=${GIT_COMMITTER_NAME:-eve-agent}
+      - GIT_COMMITTER_EMAIL=${GIT_COMMITTER_EMAIL:-eve@agent.local}
     init: true
     mem_limit: 3g
     cpus: 2
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:6080/vnc_lite.html >/dev/null && curl -fsS http://127.0.0.1:8095/api/health >/dev/null"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:6080/vnc.html >/dev/null && curl -fsS http://127.0.0.1:8095/api/health >/dev/null"]
       interval: 30s
       timeout: 5s
       retries: 3

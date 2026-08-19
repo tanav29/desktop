@@ -8,7 +8,7 @@ import { Camera, Maximize2, Minimize2, RefreshCw, WifiOff } from "lucide-react";
 type Health = { ok: boolean; model?: string; error?: string };
 
 const VNC_URL =
-  "http://localhost:6080/vnc_lite.html?host=localhost&port=6080&scale=true";
+  "http://localhost:6080/vnc.html?autoconnect=true&path=websockify&resize=scale";
 
 export function ScreenPane({ busy }: { busy: boolean }) {
   const [health, setHealth] = useState<Health | null>(null);

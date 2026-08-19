@@ -37,8 +37,8 @@ RUN apt-get update \
         python3 \
         build-essential \
         imagemagick \
+        ffmpeg \
         ca-certificates \
-        unzip \
         libnspr4 \
         libnss3 \
         libasound2t64 \
@@ -61,27 +61,35 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* \
     && rm -rf /usr/share/doc /usr/share/man
 
-# noVNC lite (RFB core) + websockify from npm/PyPI — GitHub tarballs are
-# IP-rate-limited; apt websockify would drag in numpy (these run stdlib-only)
-RUN curl -fsSL https://registry.npmjs.org/@novnc/novnc/-/novnc-1.5.0.tgz -o /tmp/novnc.tgz \
- && mkdir -p /tmp/novncpkg \
- && tar -xzf /tmp/novnc.tgz -C /tmp/novncpkg \
- && mv /tmp/novncpkg/package/lib /opt/novnc \
+# noVNC (official release incl. built-in vnc.html viewer) + websockify wheel.
+# Using the PyPI wheel (stdlib-only) avoids apt's python3-websockify which
+# pulls in numpy → BLAS/LAPACK (~40 MB). unzip is gone too (tar/python extract).
+RUN curl -fsSL https://github.com/novnc/noVNC/archive/refs/tags/v1.5.0.tar.gz -o /tmp/novnc.tgz \
+ && tar -xzf /tmp/novnc.tgz -C /opt \
+ && mv /opt/noVNC-1.5.0 /opt/novnc \
+ && rm -rf /opt/novnc/tests /opt/novnc/docs /opt/novnc/utils \
  && curl -fsSL https://pypi.org/packages/py3/w/websockify/websockify-0.12.0-py3-none-any.whl -o /tmp/ws.whl \
- && mkdir -p /opt/websockify \
- && unzip -q /tmp/ws.whl -d /opt/websockify \
- && rm -rf /tmp/novnc.tgz /tmp/novncpkg /tmp/ws.whl
+ && python3 -c "import zipfile;zipfile.ZipFile('/tmp/ws.whl').extractall('/opt/websockify')" \
+ && rm -rf /tmp/novnc.tgz /tmp/ws.whl
 
 # Chromium (real build from Chrome for Testing; the Ubuntu package is a snap stub that does not work in Docker)
 RUN curl -fsSL https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json -o /tmp/cft.json \
  && python3 -c "import json;d=json.load(open('/tmp/cft.json'));print([x['url'] for x in d['channels']['Stable']['downloads']['chrome'] if x['platform']=='linux64'][0])" > /tmp/chrome_url \
  && curl -fsSL "$(cat /tmp/chrome_url)" -o /tmp/chrome.zip \
- && unzip -q /tmp/chrome.zip -d /opt \
+ && python3 -c "import zipfile;zipfile.ZipFile('/tmp/chrome.zip').extractall('/opt')" \
  && mv /opt/chrome-linux64 /opt/chrome \
  && rm -f /opt/chrome/chrome_sandbox \
  && ln -s /opt/chrome/chrome /usr/local/bin/chromium \
- && apt-get purge -y unzip \
  && rm -rf /tmp/*
+
+# GitHub CLI (for git push + PR creation from inside the container)
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+ && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends gh \
+ && apt-get clean \
+ && rm -rf /var/lib/apt/lists/*
 
 RUN printf '[Desktop Entry]\nType=Application\nName=Chromium\nComment=Web browser\nExec=/opt/chrome/chrome --no-sandbox --disable-dev-shm-usage --no-first-run %%U\nIcon=applications-internet\nTerminal=false\nCategories=Network;WebBrowser;\nMimeType=text/html;text/xml;application/xhtml+xml;\n' > /usr/share/applications/chromium.desktop \
  && chmod 644 /usr/share/applications/chromium.desktop \
@@ -93,7 +101,6 @@ WORKDIR /workspace
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-COPY vnc_lite.html /opt/novnc/vnc_lite.html
 COPY daemon/daemon.py /opt/daemon.py
 
 EXPOSE 6080 8095

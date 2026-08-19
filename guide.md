@@ -38,7 +38,7 @@ docker compose logs -f         # watch logs
 docker ps --filter name=linux-desktop
 ```
 
-The desktop is reachable at <http://localhost:6080/vnc_lite.html>.
+The desktop is reachable at <http://localhost:6080/vnc.html>.
 
 ### 1.1 Preinstalled toolchain (agent's workbench)
 
@@ -190,7 +190,7 @@ Minimum viable control plane for a desktop-automation SDK:
    extra ports, everything over the Docker API.
 5. **Wait for ready** — poll `xdotool search --name <title>` until found,
    then `windowactivate --sync` before the first keystroke.
-6. **Health of the desktop itself** — `curl -sf http://localhost:6080/vnc_lite.html`
+6. **Health of the desktop itself** — `curl -sf http://localhost:6080/vnc.html`
    for the environment; `docker exec linux-desktop pgrep -f xfce4-session`
    for the desktop.
 
@@ -214,7 +214,7 @@ docker compose down
 docker compose logs -f
 
 # desktop health
-curl -sI http://localhost:6080/vnc_lite.html
+curl -sI http://localhost:6080/vnc.html
 docker exec linux-desktop pgrep -f xfce4-session
 
 # xdotool quick reference

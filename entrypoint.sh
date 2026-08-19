@@ -42,5 +42,5 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-echo "[entrypoint] Ready at http://localhost:6080/vnc_lite.html"
+echo "[entrypoint] Ready at http://localhost:6080/vnc.html"
 wait
