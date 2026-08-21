@@ -1,6 +1,7 @@
 import { defineHook } from "eve/hooks";
 import { computer } from "@/lib/computer";
 import { callSlackApi } from "eve/channels/slack";
+import { resolveSlackCredentials } from "@/lib/slack-config";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -12,7 +13,7 @@ import path from "node:path";
  *   - On session.started: starts a background frame capturer that grabs a
  *     JPEG of the desktop every 2s into /workspace/recordings/<sessionId>/.
  *   - On session.completed: runs ffmpeg to compile frames → mp4, then
- *     uploads the video to Slack and posts a summary.
+ *     shares the video to the session's Slack thread.
  *
  * The recording lives in the shared workspace so it's also accessible
  * from the host's ./workspace/recordings/ directory.
@@ -23,6 +24,98 @@ const RECORDINGS_DIR = "/workspace/recordings";
 
 // Per-process map of session IDs to their capture interval timers.
 const captureTimers = new Map<string, ReturnType<typeof setInterval>>();
+
+/** `files.getUploadURLExternal` response — the fields this hook consumes. */
+interface SlackUploadUrlResponse {
+  ok: boolean;
+  error?: string;
+  upload_url?: string;
+  file_id?: string;
+}
+
+/**
+ * Parse the Slack thread a session is bound to from its continuation token
+ * (`…:<channelId>:<threadTs>`, e.g. `slack:C0123ABC:1712345678.000100`).
+ * Returns null for non-Slack sessions and threadless ones.
+ */
+function slackThreadFromContinuation(
+  token: string | undefined,
+): { channelId: string; threadTs: string } | null {
+  if (!token) return null;
+  const parts = token.split(":");
+  const threadTs = parts.at(-1) ?? "";
+  const channelId = parts.at(-2) ?? "";
+  return /^[CDG]/.test(channelId) && /^\d+\.\d+$/.test(threadTs)
+    ? { channelId, threadTs }
+    : null;
+}
+
+/**
+ * Share the finished recording into the session's Slack thread.
+ *
+ * Uses Slack's current upload flow — `files.getUploadURLExternal` → raw
+ * byte POST → `files.completeUploadExternal` — because the legacy
+ * `files.upload` method has been retired by Slack and rejects new apps
+ * outright. Credentials resolve through `resolveSlackCredentials()` so
+ * UI-saved values apply here too. Best-effort: failures log, never throw.
+ */
+async function shareRecordingToSlack(
+  sessionId: string,
+  hostVideoPath: string,
+  target: { channelId: string; threadTs: string } | null,
+): Promise<void> {
+  const { botToken } = await resolveSlackCredentials();
+  if (!botToken) {
+    console.warn("[recording] no Slack credentials — recording kept locally only");
+    return;
+  }
+
+  const videoBuffer = await readFile(hostVideoPath);
+  const filename = `session-${sessionId}.mp4`;
+  const title = `Agent session recording — ${sessionId}`;
+
+  // 1. Request a one-time upload URL sized to the file.
+  const urlRes = (await callSlackApi({
+    botToken,
+    operation: "files.getUploadURLExternal",
+    body: { filename, length: videoBuffer.byteLength, alt_txt: title },
+  })) as SlackUploadUrlResponse;
+  if (!urlRes.ok || !urlRes.upload_url || !urlRes.file_id) {
+    console.warn(`[recording] Slack upload URL failed: ${urlRes.error ?? "no upload_url"}`);
+    return;
+  }
+
+  // 2. POST the raw bytes to the signed URL.
+  const push = await fetch(urlRes.upload_url, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${botToken}`,
+      "content-type": "application/octet-stream",
+    },
+    body: new Uint8Array(videoBuffer),
+  });
+  if (!push.ok) {
+    console.warn(`[recording] Slack byte upload failed: HTTP ${push.status}`);
+    return;
+  }
+
+  // 3. Complete the upload, sharing it into the session's thread when known.
+  const complete = await callSlackApi({
+    botToken,
+    operation: "files.completeUploadExternal",
+    body: {
+      files: [{ id: urlRes.file_id, title }],
+      ...(target ? { channel_id: target.channelId, thread_ts: target.threadTs } : {}),
+    },
+  });
+  if (complete.ok) {
+    console.log(
+      `[recording] shared recording ${urlRes.file_id}${target ? ` in ${target.channelId}` : " (unshared)"}`
+    );
+  } else {
+    console.warn(`[recording] Slack completeUploadExternal failed: ${complete.error}`);
+  }
+}
 
 export default defineHook({
   events: {
@@ -99,34 +192,15 @@ export default defineHook({
           "session.mp4"
         );
 
-        // Try to upload to Slack if we have a bot token.
-        const botToken = process.env.SLACK_BOT_TOKEN;
-        if (botToken) {
-          try {
-            const videoBuffer = await readFile(hostVideoPath);
-            const base64Video = videoBuffer.toString("base64");
-
-            // Upload via Slack's files API.
-            const uploadRes = await callSlackApi({
-              botToken,
-              operation: "files.upload",
-              body: {
-                content: base64Video,
-                filename: `session-${sessionId}.mp4`,
-                title: `Agent session recording — ${sessionId}`,
-                filetype: "mp4",
-              },
-            });
-
-            if (uploadRes.ok) {
-              const fileId = (uploadRes as Record<string, any>)?.file?.id ?? "unknown";
-              console.log(`[recording] uploaded to Slack: ${fileId}`);
-            } else {
-              console.warn(`[recording] Slack upload failed:`, uploadRes.error);
-            }
-          } catch (err) {
-            console.warn(`[recording] upload error:`, (err as Error).message);
-          }
+        // Share the finished recording into the session's Slack thread.
+        try {
+          await shareRecordingToSlack(
+            sessionId,
+            hostVideoPath,
+            slackThreadFromContinuation(ctx.channel.continuationToken)
+          );
+        } catch (err) {
+          console.warn(`[recording] Slack upload error:`, (err as Error).message);
         }
       } catch (err) {
         console.error(`[recording] failed:`, (err as Error).message);

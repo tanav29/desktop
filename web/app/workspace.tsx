@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useEveAgent } from "eve/react";
 import { ScreenPane } from "./screen";
+import { SlackSettings } from "./slack-settings";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -16,6 +17,7 @@ import {
   ChevronDown,
   ChevronRight,
   Loader2,
+  Hash,
   RotateCcw,
   Send,
   Square,
@@ -117,6 +119,7 @@ export function Workspace({ model }: { model: string }) {
   const busy = agent.status === "submitted" || agent.status === "streaming";
   const [draft, setDraft] = useState("");
   const [banner, setBanner] = useState<string | null>(null);
+  const [slackOpen, setSlackOpen] = useState(false);
   const tailRef = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
 
@@ -162,14 +165,24 @@ export function Workspace({ model }: { model: string }) {
             >
             <div className="flex h-11 shrink-0 items-center justify-between border-b border-zinc-800/80 px-4">
               <span className="font-mono text-[11px] text-zinc-500">chat</span>
-              <button
-                type="button"
-                onClick={() => void agent.reset()}
-                className="flex items-center gap-1.5 rounded-md px-2 py-1 font-mono text-[11px] text-zinc-400 transition-colors hover:bg-zinc-800/60 hover:text-zinc-200"
-              >
-                <RotateCcw className="size-3" />
-                new session
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setSlackOpen(true)}
+                  className="flex items-center gap-1.5 rounded-md px-2 py-1 font-mono text-[11px] text-zinc-400 transition-colors hover:bg-zinc-800/60 hover:text-zinc-200"
+                >
+                  <Hash className="size-3" />
+                  slack
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void agent.reset()}
+                  className="flex items-center gap-1.5 rounded-md px-2 py-1 font-mono text-[11px] text-zinc-400 transition-colors hover:bg-zinc-800/60 hover:text-zinc-200"
+                >
+                  <RotateCcw className="size-3" />
+                  new session
+                </button>
+              </div>
             </div>
 
             <ScrollArea className="min-h-0 flex-1">
@@ -427,6 +440,8 @@ export function Workspace({ model }: { model: string }) {
           </div>
         )}
       </main>
+
+      <SlackSettings open={slackOpen} onClose={() => setSlackOpen(false)} />
     </div>
   );
 }
