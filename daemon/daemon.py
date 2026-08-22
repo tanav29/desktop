@@ -2,7 +2,7 @@
 """In-container HTTP API for a Linux desktop — the daemon the SDK talks to.
 
 Endpoints (JSON unless noted):
-  GET  /api/health                 -> {"ok": true, "display": ":99"}
+  GET  /api/health                 -> {"ok": true, "display": ":99"}  (503 if X is down)
   POST /api/cmd      {"cmd", "timeoutMs"?}    -> {"exit","stdout","stderr"}
   POST /api/create   {"command", "title"?}    -> {"pid","log"}
   POST /api/kill     {"title"}                -> {"ok": true}
@@ -78,6 +78,27 @@ def run(script: str, timeout: int = 60, env=None) -> dict:
     }
 
 
+_health = {"at": 0.0, "ok": False}
+HEALTH_TTL = 2.0
+
+
+def display_ok() -> bool:
+    """True when the X display actually answers.
+
+    Reporting a hardcoded True here used to mask a dead Xvfb: the web UI showed
+    a green "desktop online" badge and the compose healthcheck passed while the
+    desktop was gone. Result is cached briefly because the UI polls every 5s and
+    the SDK gives /api/health a 1s budget.
+    """
+    now = time.monotonic()
+    if now - _health["at"] < HEALTH_TTL:
+        return bool(_health["ok"])
+    code, _, _ = capture_pipe(["xdpyinfo", "-display", DISPLAY], None, 5)
+    _health["at"] = now
+    _health["ok"] = code == 0
+    return bool(_health["ok"])
+
+
 def run_argv(args, timeout: int = 60) -> dict:
     code, out, err = capture_pipe(args, None, timeout)
     return {
@@ -127,7 +148,8 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_get(self) -> None:
         route = self._route()
         if route in ("/", "/api/health", "/health"):
-            return self._json(200, {"ok": True, "display": DISPLAY})
+            ok = display_ok()
+            return self._json(200 if ok else 503, {"ok": ok, "display": DISPLAY})
         if route in ("/api/observe", "/observe"):
             q = parse_qs(urlparse(self.path).query)
             quality = max(1, min(int((q.get("quality") or ["70"])[0]), 95))

@@ -31,11 +31,10 @@ process already running, actions cost milliseconds instead of ~150 ms+
 `docker exec` spawns.
 
 To prove the stack, the repo ships **eve** — a complete operator agent with
-19 tools that takes tasks from a web UI or Slack (@mention = work order),
-works on the desktop while you watch it live in the browser, and finishes
-real GitHub workflows end-to-end: clone → reproduce → fix → test → commit →
-open PR, with a summary, PR link and session recording posted back to the
-Slack thread.
+21 tools that takes tasks in a web UI chat, works on the desktop while you
+watch it live in the browser, and finishes real GitHub workflows end-to-end:
+clone → reproduce → fix → test → commit → open PR, with a summary, PR link,
+inline screenshots and a session recording posted straight into the chat.
 
 - GitHub: https://github.com/tanav29/desktop
 - Demo video: [add link]
@@ -62,7 +61,7 @@ environment usable by Claude, GPT, Gemini, GLM or open models.
 
 Shipped and working: containerized desktop image, HTTP daemon (11 endpoints),
 TypeScript SDK (npm-consumable), eve agent + Next.js chat UI with live
-desktop pane, Slack channel integration, session recording hook.
+desktop pane and in-chat screenshots/session recordings, session recording hook.
 Next: multi-container fleets behind one SDK, snapshot/restore of desktop
 state, and a hosted version.
 

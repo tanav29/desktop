@@ -9,10 +9,12 @@ so *any* agent can drive it: shell, GUI apps, browser, keyboard, mouse,
 screen. Small, fast, disposable.
 
 An agent, **eve**, ships in this repo as the proof. Give her a task in the
-web UI or @mention her in Slack, then watch the desktop live in your browser
-while she works — every click, keystroke and window visible in real time.
+web UI, then watch the desktop live in your browser while she works — every
+click, keystroke and window visible in real time. She narrates her work into
+the chat and can post desktop screenshots and a session recording right into
+the conversation.
 
-> 🎬 Demo video: _[add l ink]_ · Jump to [Architecture](#architecture) or
+> 🎬 Demo video: _[add link]_ · Jump to [Architecture](#architecture) or
 > [Quick start](#quick-start)
 
 ## Why
@@ -34,9 +36,9 @@ no heavyweight runtime, nothing installed on your host but Docker.
 ```
 ┌──────────────────── your machine ────────────────────┐
 │                                                      │
-│   web UI (Next.js) ────── eve agent ────── Slack     │
-│     (chat + live      (tools + loop)   (@mention =   │
-│      desktop pane)                      a work order)│
+│   web UI (Next.js) ────── eve agent                  │
+│     (chat + live        (tools + loop)               │
+│      desktop pane)                                   │
 │                           │                          │
 │                    computer-use-sdk                  │
 │                           │ HTTP                     │
@@ -100,7 +102,7 @@ Full API in [`sdk/README.md`](sdk/README.md).
 
 [`web/`](web/) contains a complete operator agent built on this stack:
 
-- **19 tools**: `type_text`, `key`, `mouse`, `click`, `create_app`, `kill_app`,
+- **21 tools**: `type_text`, `key`, `mouse`, `click`, `create_app`, `kill_app`,
   `inspect_desktop`, `observe`, `screenshot`, `git_clone`, `git_commit`, … plus
   `cmd` as the escape hatch for anything else.
 - **Works without vision**: `inspect_desktop` reads window/focus/pointer state
@@ -108,23 +110,21 @@ Full API in [`sdk/README.md`](sdk/README.md).
   vision-capable model and `observe()` adds real screen pixels.
 - **Watchable by design**: the web UI shows the live desktop next to the chat;
   a recording hook captures frames through the whole session.
-- **Slack as the command line**: @mention eve in a channel →
+- **Media in the chat**: eve can drop evidence straight into the conversation —
+  `share_screenshot` posts an inline screenshot of the current desktop, and
+  `share_recording` compiles the captured frames into a timelapse you can watch
+  (or download) right in the chat. Both render as chat attachments the moment
+  the tool returns. The timelapse also compiles automatically at the end of
+  every turn. Recordings are animated GIFs built with the ImageMagick already
+  in the image, so the container stays ffmpeg-free.
 
   ```
-  @eve fix the login bug on github.com/me/myrepo
+  fix the login bug on github.com/me/myrepo
     → clone → reproduce → fix → test → commit → open PR
-    → summary + PR link + session recording posted back to the thread
+    → summary + PR link + screenshots + session recording, all in the chat
   ```
 
-  While she works, a **live progress feed** streams every action into the
-  thread — tool calls as they happen, plus periodic desktop screenshots —
-  so the CEO watches the job get done without leaving Slack.
-
-- **No-yaml setup**: click **slack** in the app header, paste a bot token +
-  signing secret, done — credentials are verified against Slack before
-  saving and apply instantly (env vars still work for headless setups).
-
-Setup: [`docs/slack-setup.md`](docs/slack-setup.md)
+Setup: no extra credentials needed — everything runs locally.
 
 ## Layout
 
@@ -132,8 +132,7 @@ Setup: [`docs/slack-setup.md`](docs/slack-setup.md)
 ├── Dockerfile / docker-compose.yml / entrypoint.sh
 ├── daemon/daemon.py    # in-container HTTP API (port 8095)
 ├── sdk/                # TypeScript SDK (computer-use-sdk)
-├── web/                # Next.js app + eve agent + Slack channel
-├── docs/slack-setup.md # Slack integration guide
+├── web/                # Next.js app + eve agent + chat media (screenshots, recordings)
 ├── guide.md            # xdotool automation playbook
 └── workspace/          # shared with the container, persists between runs
 ```

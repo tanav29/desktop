@@ -67,37 +67,34 @@ before recording so it completes cleanly.
 
 ## [2:15–3:45] eve — the proof, a real task end-to-end
 
-**On screen:** the web app — chat left, live desktop right. Then Slack.
+**On screen:** the web app — chat left, live desktop right.
 
 > "An SDK is only worth something if an agent can build real work on top of
 > it. So meet eve — a full operator agent shipping in this repo, with
-> nineteen tools: type, click, key, inspect the desktop, git clone, commit…
+> twenty-one tools: type, click, key, inspect the desktop, git clone, commit…
 >
 > She works even without a vision model — she reads window state, focus and
 > pointer position as text. Give her a vision model and she also sees the
 > actual pixels.
 >
-> Let's give her a real job. Not from this app — from Slack, because that's
-> where work asks for help:"
+> Let's give her a real job, right from the chat:"
 >
-> *(type in Slack)* `@eve fix the login bug on github.com/<you>/<repo>`
+> *(type in the chat)* `fix the login bug on github.com/<you>/<repo>`
 >
-> *(cut back to Slack: progress posts are already landing in the thread —*
-> *every tool call with a desktop screenshot attached)*
->
-> "And watch the thread — she narrates her own work into Slack as she goes,
-> screenshots included. I don't even need the dashboard."
+> "And watch the chat — she narrates her own work as she goes, and she can
+> post screenshots of the desktop straight into the conversation. I don't
+> even need the dashboard."
 >
 > *(now narrate over the live desktop while she works — keep it tight)*
 >
 > "She clones the repo… reproduces the bug in the browser… finds the cause…
 > fixes it… runs the tests… commits… opens a pull request."
 >
-> *(cut to the Slack thread)*
+> *(cut to the chat: her final message)*
 >
-> "And back in the thread: a summary, the PR link, and a recording of her
-> whole session — captured automatically while she worked. I watched the
-> entire thing happen live, but I never touched the machine."
+> "And there it is: a summary, the PR link, inline screenshots — and a
+> recording of her whole session, captured automatically while she worked.
+> I watched the entire thing happen live, but I never touched the machine."
 
 ## [3:45–4:30] Why it's built this way — the role of AI
 
@@ -116,7 +113,7 @@ before recording so it completes cleanly.
 ## [4:30–5:00] Close — what's next
 
 > "So: a disposable computer for agents, drivable over HTTP in milliseconds,
-> with an agent that already ships real pull requests from a Slack message.
+> with an agent that already ships real pull requests from a chat message.
 >
 > Next I'm building fleet orchestration — many desktops behind one SDK —
 > snapshot and restore, and a hosted version.
