@@ -43,6 +43,7 @@ RUN apt-get update \
         nano \
         python3-minimal \
         imagemagick \
+        xclip \
         ca-certificates \
         libnspr4 \
         libnss3 \
@@ -94,7 +95,8 @@ RUN curl -fsSL https://googlechromelabs.github.io/chrome-for-testing/last-known-
  && mv /opt/chrome-linux64 /opt/chrome \
  && rm -f /opt/chrome/chrome_sandbox \
  && chmod +x /opt/chrome/chrome /opt/chrome/chrome_crashpad_handler /opt/chrome/chrome-wrapper \
- && ln -s /opt/chrome/chrome /usr/local/bin/chromium \
+ && printf '#!/bin/sh\n# Chromium refuses to start as root without --no-sandbox, and /dev/shm is\n# small in Docker. Bake both in so `chromium <url>` just works.\nexec /opt/chrome/chrome --no-sandbox --disable-dev-shm-usage --no-first-run "$@"\n' > /usr/local/bin/chromium \
+ && chmod +x /usr/local/bin/chromium \
  && rm -rf /opt/chrome/WidevineCdm /opt/chrome/hyphen-data \
  && cd /opt/chrome/locales \
  && for f in *.pak; do [ "$f" = "en-US.pak" ] || rm -f "$f"; done \
@@ -111,6 +113,10 @@ COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
 COPY daemon/daemon.py /opt/daemon.py
+
+# Full-bleed viewer served alongside noVNC's own pages. Copied last so editing
+# it doesn't invalidate the apt/noVNC/Chromium layers above.
+COPY novnc/desktop.html /opt/novnc/desktop.html
 
 EXPOSE 6080 8095
 

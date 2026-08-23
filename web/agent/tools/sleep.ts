@@ -1,3 +1,3 @@
-import { sleep } from "eve/tools/sleep";
+import { disableTool } from "eve/tools";
 
-export default sleep();
+export default disableTool();

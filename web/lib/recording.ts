@@ -1,8 +1,8 @@
 import { computer } from "@/lib/computer";
 
 /**
- * Shared timelapse plumbing for the recording hook and the `share_recording`
- * tool, so both compile frames identically.
+ * Shared timelapse plumbing for the recording hook and the `share` tool, so both
+ * compile frames identically.
  *
  * The desktop image deliberately ships without ffmpeg (~170 MB of codec stack —
  * see the Dockerfile), so recordings are animated GIFs built with ImageMagick,

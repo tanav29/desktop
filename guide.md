@@ -14,7 +14,10 @@ keyboard/mouse/window automation over plain CLI commands.
 | Display | Xvfb virtual X server on `:99` | inside container |
 | VNC | x11vnc on port `5900` | inside container (not exposed) |
 | noVNC | websockify + noVNC, **port `6080`** | exposed to host |
+| Viewer | `/opt/novnc/desktop.html` — full-bleed page that reports its canvas geometry | inside container |
+| Daemon | small HTTP control plane, **port `8095`** (`/api/actions`, `/api/pointer`, …) | inside container |
 | Desktop control | `xdotool` (X11 automation CLI) | inside container |
+| Clipboard | `xclip` (paste path — one write instead of N keystrokes) | inside container |
 | Screenshots | ImageMagick (`import` / `convert`) | inside container |
 | Browser | Chromium (Chrome-for-Testing build) at `/opt/chrome/chrome` | inside container |
 | Working dir | `/workspace` (host folder `./workspace` mounted in) | host ↔ container |
@@ -24,8 +27,10 @@ Files:
 ```
 computer/
 ├── Dockerfile          # image definition (XFCE, tools, xdotool, Chromium, noVNC)
-├── docker-compose.yml  # port 6080, /workspace volume, resource caps
-├── entrypoint.sh       # starts Xvfb → XFCE → x11vnc → websockify
+├── docker-compose.yml  # ports 6080 + 8095, /workspace volume, resource caps
+├── entrypoint.sh       # starts Xvfb → XFCE → x11vnc → websockify → daemon
+├── daemon/daemon.py    # HTTP control plane (see §2.0)
+├── novnc/desktop.html  # full-bleed viewer, copied into /opt/novnc
 └── workspace/          # created on first run, persists between restarts
 ```
 
@@ -52,6 +57,7 @@ The desktop is reachable at <http://localhost:6080/vnc.html>.
 | Search | `ripgrep` |
 | Images | ImageMagick: `import` (screenshot), `convert` |
 | X11 control | `xdotool`, `xvfb`, `x11vnc` |
+| Clipboard | `xclip` |
 | Browser | Chromium via `/opt/chrome/chrome` (alias `chromium`) |
 
 No `node`/`npm` (kept out for size). If you need them later:
@@ -65,6 +71,59 @@ docker exec -d linux-desktop bash -c 'apt-get update && apt-get install -y --no-
 `xdotool` talks to the X server (`DISPLAY=:99`) and simulates keyboard, mouse,
 and window actions. Every call is a one-liner, so it's trivial to wrap in
 `docker exec` from the host or inside the container.
+
+The rest of this section is the primitive vocabulary — useful for debugging and
+for one-off pokes. **For anything programmatic, drive `/api/actions` instead**
+(§2.0): one HTTP call per *task* rather than one per keystroke.
+
+### 2.0 Batched actions (`POST /api/actions`)
+
+The daemon runs a whole input sequence in-container and returns once. This is
+the primary control surface; the SDK's `mouse`/`click`/`type`/`key` helpers are
+just one-element calls into it.
+
+```bash
+curl -sX POST localhost:8095/api/actions -H 'content-type: application/json' -d '{
+  "actions": [
+    {"do": "wait_for", "window": "Chromium", "timeoutMs": 20000},
+    {"do": "focus",    "window": "Chromium"},
+    {"do": "key",      "keys": "ctrl+l"},
+    {"do": "type",     "text": "example.com"},
+    {"do": "key",      "keys": "Return"},
+    {"do": "wait",     "ms": 2500}
+  ]}'
+```
+
+| `do` | args | notes |
+|---|---|---|
+| `move` | `x, y` | |
+| `click` | `button=1, x?, y?, count=1` | moves first when `x`/`y` given |
+| `drag` | `x1, y1, x2, y2` | hops through the midpoint so motion-watching apps see it |
+| `scroll` | `dir: up\|down, amount=3` | wheel buttons 4/5 |
+| `type` | `text, delayMs=12` | |
+| `key` | `keys, count=1` | xdotool key syntax (`ctrl+shift+t`) |
+| `paste` | `text` | clipboard + `ctrl+v`; length-independent |
+| `focus` | `window` | search → `windowactivate --sync` |
+| `wait` | `ms` | |
+| `wait_for` | `window, timeoutMs=15000` | polls in-container, no round-trips |
+
+Max 32 actions, 120s total budget. Execution stops at the first failure and the
+response says exactly where:
+
+```json
+{"ok": false, "failedAt": 3,
+ "steps": [{"i": 0, "do": "focus", "ok": true}, "…",
+           {"i": 3, "do": "click", "ok": false, "note": "…"}],
+ "state": {"pointer": [812, 61], "focused": "Chromium"}}
+```
+
+Free text (`text`, `window`) reaches xdotool through environment variables, never
+interpolated into a shell string — so payloads containing `$(…)`, backticks or
+quotes are typed literally rather than executed.
+
+`GET /api/pointer` returns `{"x", "y", "click": {"x", "y", "button", "at"}}` —
+where the pointer *actually* is, which is what the web UI's overlay draws (Xvfb
+has no hardware cursor, so a VNC viewer can't show it).
 
 ### 2.1 Keyboard
 
@@ -118,6 +177,9 @@ docker exec linux-desktop bash -c '
 
 Poll with `xdotool search` in a retry loop while an app is starting
 (`--timeout`/`--sync` combinations plus a few `sleep 1` rounds work well).
+
+`/api/actions` has this built in — `wait_for` then `focus` (§2.0) is the same
+pattern, polled inside the container instead of over the wire.
 
 ### 2.5 Screenshots
 
@@ -184,15 +246,15 @@ Minimum viable control plane for a desktop-automation SDK:
    register the entry.
 3. **Kill** — `pkill -f "worker-1"` or `xdotool search --name worker-1 windowkill`;
    unregister.
-4. **Control** — one `docker exec linux-desktop xdotool ...` per action:
-   `key`, `type`, `mousemove`, `click`, `search`, `windowactivate`, …
-   plus `import` for before/after screenshots. Host wrapper → container = no
-   extra ports, everything over the Docker API.
-5. **Wait for ready** — poll `xdotool search --name <title>` until found,
-   then `windowactivate --sync` before the first keystroke.
-6. **Health of the desktop itself** — `curl -sf http://localhost:6080/vnc.html`
-   for the environment; `docker exec linux-desktop pgrep -f xfce4-session`
-   for the desktop.
+4. **Control** — one request per *sequence*, not per keystroke: `POST
+   /api/actions` with the whole batch (§2.0), plus `import` for before/after
+   screenshots. Round-trips are the expensive part, especially when a language
+   model is the caller and every call costs a turn of context.
+5. **Wait for ready** — `wait_for` then `focus` as the first two actions of the
+   batch that needs the window; don't sleep-and-hope from outside.
+6. **Health of the desktop itself** — `curl -sf http://localhost:8095/api/health`
+   for the daemon, `curl -sf http://localhost:6080/vnc.html` for the viewer;
+   `docker exec linux-desktop pgrep -f xfce4-session` for the desktop.
 
 Failure modes to expect:
 
@@ -215,7 +277,13 @@ docker compose logs -f
 
 # desktop health
 curl -sI http://localhost:6080/vnc.html
+curl -s  http://localhost:8095/api/health
 docker exec linux-desktop pgrep -f xfce4-session
+
+# daemon control plane
+curl -sX POST localhost:8095/api/actions -H 'content-type: application/json' \
+  -d '{"actions":[{"do":"move","x":800,"y":450},{"do":"click"}]}'
+curl -s localhost:8095/api/pointer
 
 # xdotool quick reference
 docker exec -d linux-desktop bash -c 'DISPLAY=:99 xfce4-terminal --title=Demo --command=bash'

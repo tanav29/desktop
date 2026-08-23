@@ -102,6 +102,16 @@
   animation: blink 0.9s step-end infinite;
 }
 
+/* Click feedback for the agent's pointer on the live desktop pane. One shot:
+   the element is keyed on the click timestamp so React remounts it per click. */
+@keyframes vnc-ripple {
+  from { transform: scale(0.35); opacity: 0.9; }
+  to   { transform: scale(2.6);  opacity: 0; }
+}
+.animate-vnc-ripple {
+  animation: vnc-ripple 0.55s ease-out forwards;
+}
+
 
 .typeset-docs {
   --typeset-font-body: var(--font-geist);

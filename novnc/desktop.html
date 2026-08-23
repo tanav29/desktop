@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!--
+  desktop.html — full-bleed noVNC viewer for this project's web UI.
+
+  Derived from noVNC 1.5.0's vnc_lite.html (Copyright (C) 2019 The noVNC
+  Authors). vnc_lite.html is licensed under the 2-Clause BSD license and noVNC
+  itself under MPL 2.0 — see /opt/novnc/LICENSE.txt in the image.
+
+  Every difference from vnc_lite.html is deliberate:
+
+  1. No #top_bar, status line, or Send-CtrlAltDel button. vnc_lite puts a ~23px
+     bar above a flex:1 #screen, which offsets the canvas by an amount the
+     parent page cannot measure (the iframe is cross-origin: app on :3000,
+     noVNC on :6080). The app draws the agent's pointer as an overlay on top of
+     this frame, so the canvas has to fill it.
+  2. It posts its own canvas geometry to the parent ("vnc-geometry") on connect,
+     on resize, and on request. That way the overlay maps framebuffer pixels to
+     screen pixels from noVNC's real numbers instead of re-deriving its scaling.
+  3. It reconnects by itself after a disconnect. The container gets rebuilt and
+     restarted often; vnc_lite leaves a dead grey frame behind until someone
+     reloads it.
+
+  Query params: host, port, path (default "websockify"), password, view_only.
+  Scaling is always on — x11vnc cannot do remote resize, so the fixed
+  framebuffer is scaled (aspect preserved) to fit whatever pane it lands in.
+-->
+<title>desktop</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+  #screen { position: absolute; inset: 0; background: #000; }
+</style>
+</head>
+
+<body>
+<div id="screen"></div>
+
+<script type="module" crossorigin="anonymous">
+import RFB from './core/rfb.js';
+
+const screenEl = document.getElementById('screen');
+
+function readQueryVariable(name, defaultValue) {
+    // location.href rather than location.search, matching vnc_lite.html.
+    const match = document.location.href.match(new RegExp('.*[?&]' + name + '=([^&#]*)'));
+    return match ? decodeURIComponent(match[1]) : defaultValue;
+}
+
+const host = readQueryVariable('host', window.location.hostname);
+const port = readQueryVariable('port', window.location.port);
+const password = readQueryVariable('password');
+const wsPath = readQueryVariable('path', 'websockify');
+const viewOnly = readQueryVariable('view_only', 'false') === 'true';
+
+function socketUrl() {
+    let url = (window.location.protocol === 'https:' ? 'wss' : 'ws') + '://' + host;
+    if (port) url += ':' + port;
+    return url + '/' + wsPath;
+}
+
+let rfb = null;
+let canvasWatcher = null;
+let retries = 0;
+let lastGeometry = '';
+
+function post(message) {
+    try {
+        parent.postMessage(message, '*');
+    } catch {
+        // No parent, or it navigated away mid-post. Nothing to do.
+    }
+}
+
+/**
+ * Tell the parent where the framebuffer actually is inside this frame.
+ *
+ * canvas.width/height are the framebuffer's own dimensions (noVNC sizes the
+ * backing store to the remote screen and scales with CSS), while the bounding
+ * rect is where those pixels land after scaling and letterbox centering. The
+ * parent needs both to place an overlay marker on a given screen coordinate.
+ */
+function reportGeometry(force) {
+    const canvas = screenEl.querySelector('canvas');
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+
+    const geometry = {
+        type: 'vnc-geometry',
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height,
+        fbWidth: canvas.width,
+        fbHeight: canvas.height,
+    };
+
+    const key = [
+        geometry.left, geometry.top, geometry.width,
+        geometry.height, geometry.fbWidth, geometry.fbHeight,
+    ].join(':');
+    if (!force && key === lastGeometry) return;
+    lastGeometry = key;
+    post(geometry);
+}
+
+function watchCanvas() {
+    const canvas = screenEl.querySelector('canvas');
+    if (!canvas) return;
+    canvasWatcher?.disconnect();
+    canvasWatcher = new ResizeObserver(() => reportGeometry(false));
+    canvasWatcher.observe(canvas);
+    reportGeometry(true);
+}
+
+function connect() {
+    post({ type: 'vnc-status', state: 'connecting' });
+
+    rfb = new RFB(screenEl, socketUrl(), { credentials: { password } });
+    rfb.viewOnly = viewOnly;
+    rfb.scaleViewport = true;
+    rfb.resizeSession = false;
+    rfb.clipViewport = false;
+    try {
+        rfb.background = '#000';
+    } catch {
+        // Older/newer noVNC without the setter; the stylesheet covers it.
+    }
+
+    rfb.addEventListener('connect', () => {
+        retries = 0;
+        post({ type: 'vnc-status', state: 'connected' });
+        watchCanvas();
+    });
+
+    rfb.addEventListener('disconnect', (event) => {
+        post({ type: 'vnc-status', state: 'disconnected', clean: !!event.detail?.clean });
+        canvasWatcher?.disconnect();
+        canvasWatcher = null;
+        lastGeometry = '';
+        rfb = null;
+        // x11vnc runs with -forever, so a disconnect means the container is
+        // restarting rather than the session ending. Back off to 5s and keep
+        // trying instead of leaving a dead frame.
+        setTimeout(connect, Math.min(1000 * Math.pow(1.6, retries++), 5000));
+    });
+
+    rfb.addEventListener('credentialsrequired', () => {
+        rfb?.sendCredentials({ password: password ?? '' });
+    });
+}
+
+// The parent may mount its message listener after we have already connected,
+// so let it ask for the geometry rather than waiting for the next change.
+window.addEventListener('message', (event) => {
+    if (event.data?.type === 'request-geometry') reportGeometry(true);
+});
+
+// noVNC rescales on window resize; this catches the cases ResizeObserver alone
+// would miss (letterbox offset shifting without the canvas changing size).
+window.addEventListener('resize', () => reportGeometry(false));
+setInterval(() => reportGeometry(false), 1000);
+
+connect();
+</script>
+</body>
+</html>

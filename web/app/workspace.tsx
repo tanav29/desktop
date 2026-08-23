@@ -12,14 +12,11 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import {
   ArrowRight,
-  Check,
   ChevronDown,
   ChevronRight,
-  Loader2,
   RotateCcw,
   Send,
   Square,
-  X,
 } from "lucide-react";
 import Markdown from "react-markdown";
 
@@ -42,9 +39,9 @@ function isVideoUrl(url: string): boolean {
 type Media = { url: string; caption?: string };
 
 /**
- * Media the agent posted into the chat. `share_screenshot` and
- * `share_recording` return a `media` field for exactly this purpose, so the
- * attachment renders whether or not the model remembers to mention it.
+ * Media the agent posted into the chat. The `share` tool returns a `media` field
+ * for exactly this purpose, so the attachment renders whether or not the model
+ * remembers to mention it.
  */
 function mediaFromOutput(output: unknown): Media | null {
   if (!output || typeof output !== "object") return null;
@@ -80,119 +77,6 @@ function MediaCard({ url, caption }: Media) {
 
 function ts(): string {
   return new Date().toLocaleTimeString("en-GB", { hour12: false });
-}
-
-function fmt(v: unknown): string {
-  if (typeof v === "string") return v;
-  try {
-    return JSON.stringify(v, null, 1);
-  } catch {
-    return String(v);
-  }
-}
-
-type ToolStatus = "running" | "waiting" | "done" | "failed";
-
-/**
- * eve projects every tool call as a `dynamic-tool` part whose `state` walks the
- * call lifecycle. Map that to the three things the UI cares about.
- */
-function toolStatus(part: any): ToolStatus {
-  switch (part?.state) {
-    case "output-available":
-      return part.partial ? "running" : "done";
-    case "output-error":
-    case "output-denied":
-      return "failed";
-    case "approval-requested":
-      return "waiting";
-    default:
-      // input-streaming, input-available, approval-responded
-      return "running";
-  }
-}
-
-/** Collapsible record of one tool call: name, input, and result. */
-function Dispatch({ part }: { part: any }) {
-  const [open, setOpen] = useState<boolean | null>(null);
-  const name: string = part?.toolMetadata?.eve?.name ?? part?.toolName ?? "tool";
-  const status = toolStatus(part);
-  const settled = status === "done" || status === "failed";
-
-  // Failures and in-flight calls open themselves; successes stay tucked away.
-  const expanded = open ?? status !== "done";
-
-  const argsPreview = (() => {
-    if (part?.input === undefined) return "";
-    const raw = fmt(part.input);
-    return raw.length > 110 ? raw.slice(0, 110) + "…" : raw;
-  })();
-
-  const resultText = (() => {
-    if (status === "failed") return part?.errorText ?? fmt(part?.output) ?? "failed";
-    if (part?.output === undefined) return "";
-    return fmt(part.output);
-  })();
-
-  return (
-    <div
-      className={cn(
-        "overflow-hidden rounded-lg border border-zinc-800/80 bg-zinc-900/40",
-        status === "running" && "border-l-2 border-l-amber-400",
-        status === "waiting" && "border-l-2 border-l-sky-400",
-        status === "failed" && "border-l-2 border-l-red-500",
-        status === "done" && "border-l-2 border-l-emerald-500/70"
-      )}
-    >
-      <button
-        type="button"
-        onClick={() => setOpen((o) => (o === null ? status === "done" : !o))}
-        className="flex w-full items-center gap-2 px-2.5 py-2 text-left font-mono text-[11px] text-zinc-300 transition-colors hover:bg-zinc-800/50"
-      >
-        {status === "running" || status === "waiting" ? (
-          <Loader2 className="size-3 shrink-0 animate-spin text-amber-400" />
-        ) : status === "failed" ? (
-          <X className="size-3 shrink-0 text-red-400" />
-        ) : (
-          <Check className="size-3 shrink-0 text-emerald-400" />
-        )}
-        <span className="shrink-0 font-medium text-zinc-200">{name}</span>
-        <span className="min-w-0 flex-1 truncate text-zinc-500">{argsPreview}</span>
-        {expanded ? (
-          <ChevronDown className="size-3 shrink-0 text-zinc-500" />
-        ) : (
-          <ChevronRight className="size-3 shrink-0 text-zinc-500" />
-        )}
-      </button>
-      {expanded && (
-        <div className="space-y-2.5 border-t border-zinc-800/80 px-2.5 py-2.5">
-          {part?.input !== undefined && (
-            <div>
-              <div className="text-[10px] font-medium text-zinc-500">input</div>
-              <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-zinc-400">
-                {fmt(part.input)}
-              </pre>
-            </div>
-          )}
-          {settled && resultText && (
-            <div>
-              <div className="text-[10px] font-medium text-zinc-500">
-                {status === "failed" ? "error" : "result"}
-              </div>
-              <pre
-                className={cn(
-                  "mt-1 whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed",
-                  status === "failed" ? "text-red-300" : "text-zinc-300"
-                )}
-              >
-                {resultText.length > 400 ? resultText.slice(0, 400) + "…" : resultText}
-              </pre>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
 }
 
 /** The HITL prompt eve raises when a tool needs a person to answer. */
@@ -248,7 +132,7 @@ function InputRequest({
 }
 
 /**
- * Fallback for when the agent never called `share_recording`: the hook compiles
+ * Fallback for when the agent never shared a recording itself: the hook compiles
  * a timelapse at the end of every turn, so probe for it and show it once it
  * lands. Silent while waiting — no spinner noise if there's no recording.
  */
@@ -431,7 +315,7 @@ export function Workspace({ model }: { model: string }) {
                     key={s}
                     type="button"
                     onClick={() => send(s)}
-                    className="group flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3.5 py-2.5 text-left text-[13px] leading-relaxed text-zinc-300 transition-colors hover:border-zinc-700 hover:bg-zinc-900"
+                    className="group flex items-center justify-between gap-3 rounded-lg border border-zinc-800 bg-zinc-900/40 px-3.5 py-2.5 text-left text-sm leading-relaxed text-zinc-300 transition-colors hover:border-zinc-700 hover:bg-zinc-900"
                   >
                     <span className="flex-1">{s}</span>
                     <ArrowRight className="size-3.5 shrink-0 text-zinc-600 transition-colors group-hover:text-amber-400" />
@@ -508,20 +392,25 @@ export function Workspace({ model }: { model: string }) {
                           );
                         }
 
-                        // Every tool call arrives as `dynamic-tool`; the old
-                        // code looked for a `tool-invocation` type that eve
-                        // never emits, so nothing rendered at all.
+                        // Every tool call arrives as `dynamic-tool` — and we
+                        // deliberately render no record of it. The live desktop
+                        // pane is the progress indicator; the transcript stays
+                        // reasoning + media + one closing summary. Only two
+                        // things from a tool call earn space here: media the
+                        // agent explicitly shared, and a question it is blocked
+                        // on.
                         case "dynamic-tool": {
-                          const request = part.toolMetadata?.eve?.inputRequest;
                           const media =
                             part.state === "output-available"
                               ? mediaFromOutput(part.output)
                               : null;
+                          const request = part.toolMetadata?.eve?.inputRequest;
+                          const asking = request && part.state === "approval-requested";
+                          if (!media && !asking) return null;
                           return (
                             <div key={part.toolCallId ?? i} className="space-y-1">
-                              <Dispatch part={part} />
                               {media && <MediaCard {...media} />}
-                              {request && part.state === "approval-requested" && (
+                              {asking && (
                                 <InputRequest
                                   request={request}
                                   onRespond={(r) => void agent.respond([r as any])}

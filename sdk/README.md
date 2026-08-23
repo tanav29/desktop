@@ -47,25 +47,62 @@ await computer.cmd("xdotool getactivewindow getwindowname"); // what has focus
 await computer.create("xfce4-terminal", { title: "worker-1" });
 await computer.create("chromium https://example.com", { title: "web-1" });
 
-// focus + type into the terminal (search -> activate --sync -> type)
-await computer.cmd(
-  'wid=$(xdotool search --onlyvisible --name worker-1 | head -1); ' +
-  'xdotool windowactivate --sync "$wid"; ' +
-  'xdotool type --delay 40 "echo hello"; xdotool key Return'
-);
+// 3. actions — a whole input sequence in ONE round-trip. The main event.
+await computer.actions([
+  { do: "wait_for", window: "worker-1", timeoutMs: 15_000 },
+  { do: "focus", window: "worker-1" },
+  { do: "type", text: "echo hello" },
+  { do: "key", keys: "Return" },
+]);
 
-// 3. kill — matches process command line AND window title.
+// 4. kill — matches process command line AND window title.
 await computer.kill("web-1");
 
-// 4. screenshot — written to /workspace, returned as the host-side path.
+// 5. screenshot — written to /workspace, returned as the host-side path.
 const png = await computer.screenshot("state.png");
 
-// 5. live — full-motion view of the desktop over HTTP.
+// 6. live — full-motion view of the desktop over HTTP.
 const feed = await computer.live();               // port 8090
 // open feed.url in a browser, or read feed.streamUrl from ffplay/agents;
 // programmatic use: for await (const jpeg of computer.frames({ fps: 4 })) ...
 await feed.stop();                                 // when done
 ```
+
+## Actions
+
+`actions(list)` is the primary way to drive the desktop: the daemon executes the
+whole list in-container and answers once. `mouse`/`click`/`type`/`key`/`drag`/
+`scroll`/`paste`/`focus`/`waitFor` are one-element calls into the same path, so
+there is a single code path to reason about.
+
+| `do` | args |
+|---|---|
+| `move` | `x, y` |
+| `click` | `button?=1, x?, y?, count?=1` |
+| `drag` | `x1, y1, x2, y2` |
+| `scroll` | `dir: "up" \| "down", amount?=3` |
+| `type` | `text, delayMs?` |
+| `key` | `keys, count?=1` |
+| `paste` | `text` |
+| `focus` | `window` |
+| `wait` | `ms` |
+| `wait_for` | `window, timeoutMs?=15000` |
+
+Max 32 actions per call. Execution stops at the first failure; the result carries
+`ok`, `ran`, `failedAt`, a per-step log, and the resulting `state`
+(`pointer`, `focused`). The convenience helpers throw on failure instead —
+`actions()` itself returns the result for you to branch on.
+
+```ts
+const result = await computer.actions([{ do: "focus", window: "nope" }]);
+result.ok;               // false
+result.failedAt;         // 0
+result.steps[0].note;    // "no visible window matching: nope"
+result.state.focused;    // whatever actually has focus
+```
+
+`pointer()` returns `{ x, y, click }` — where the pointer is now, plus the last
+click. Xvfb has no hardware cursor, so this is the only way to know.
 
 ## Watch the desktop live
 

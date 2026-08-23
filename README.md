@@ -61,7 +61,7 @@ Three layers, each replaceable:
 |---|---|---|
 | **Container** | Real GUI desktop: Xvfb → XFCE → x11vnc → noVNC | Any X11 desktop |
 | **Daemon** (`daemon/daemon.py`) | Python-stdlib HTTP API over xdotool/ImageMagick/bash — shell quoting and process cleanup handled for you | Anything that speaks HTTP |
-| **SDK** (`sdk/`) | Thin TS client: `cmd`, `create`, `kill`, `screenshot`, `live`, `frames` | Raw `fetch()` calls |
+| **SDK** (`sdk/`) | Thin TS client: `actions`, `cmd`, `create`, `kill`, `screenshot`, `pointer`, `live`, `frames` | Raw `fetch()` calls |
 
 Because every control surface is one HTTP round-trip to a process already
 inside the container, calls cost milliseconds — versus ~150 ms+ for spawning
@@ -90,6 +90,16 @@ import { computer } from "computer-use-sdk";
 
 await computer.cmd("pgrep -f xfce4-session");     // shell — the escape hatch
 await computer.create("chromium https://example.com", { title: "web-1" });
+
+// a whole input sequence in one round-trip, run inside the container
+await computer.actions([
+  { do: "wait_for", window: "Chrome for Testing", timeoutMs: 45_000 },
+  { do: "focus", window: "Chrome for Testing" },
+  { do: "key", keys: "ctrl+l" },
+  { do: "paste", text: "https://news.ycombinator.com" },
+  { do: "key", keys: "Return" },
+]);
+
 await computer.screenshot("state.png");            // → workspace/state.png
 const feed = await computer.live();                // MJPEG stream, humans + agents
 for await (const frame of computer.frames({ fps: 4 })) { /* vision input */ }
@@ -102,21 +112,27 @@ Full API in [`sdk/README.md`](sdk/README.md).
 
 [`web/`](web/) contains a complete operator agent built on this stack:
 
-- **21 tools**: `type_text`, `key`, `mouse`, `click`, `create_app`, `kill_app`,
-  `inspect_desktop`, `observe`, `screenshot`, `git_clone`, `git_commit`, … plus
-  `cmd` as the escape hatch for anything else.
-- **Works without vision**: `inspect_desktop` reads window/focus/pointer state
-  as text, so text-only models stay effective; point `AI_MODEL` at any
-  vision-capable model and `observe()` adds real screen pixels.
-- **Watchable by design**: the web UI shows the live desktop next to the chat;
-  a recording hook captures frames through the whole session.
-- **Media in the chat**: eve can drop evidence straight into the conversation —
-  `share_screenshot` posts an inline screenshot of the current desktop, and
-  `share_recording` compiles the captured frames into a timelapse you can watch
-  (or download) right in the chat. Both render as chat attachments the moment
-  the tool returns. The timelapse also compiles automatically at the end of
-  every turn. Recordings are animated GIFs built with the ImageMagick already
-  in the image, so the container stays ffmpeg-free.
+- **8 tools, not 20**: `computer` (a whole batched input sequence per call),
+  `observe`, `app`, `cmd`, `share`, plus `todo` / `ask_question` / `load_skill`.
+  Situational knowledge lives in load-on-demand skills
+  ([`web/agent/skills/`](web/agent/skills/)) rather than in the system prompt, so
+  a browser task pays for browser tips and a git task doesn't.
+- **Works without vision**: `observe` returns window/focus/pointer state as text
+  *and*, for vision-capable models, the screen pixels — so text-only models stay
+  effective and `AI_MODEL` is the only switch.
+- **Watchable by design**: the web UI shows the live desktop next to the chat,
+  with the agent's own pointer drawn as an amber ring (Xvfb has no hardware
+  cursor, so the overlay polls `/api/pointer`). A recording hook captures frames
+  through the whole session.
+- **Quiet transcript**: tool calls are not rendered at all — the live desktop is
+  the progress indicator. What lands in the chat is the agent's reasoning, any
+  media it deliberately shared, and one closing summary.
+- **Media in the chat**: `share` drops evidence straight into the conversation —
+  an inline screenshot of the current desktop, or the captured frames compiled
+  into a timelapse you can watch (or download) right there. The timelapse also
+  compiles automatically at the end of every turn. Recordings are animated GIFs
+  built with the ImageMagick already in the image, so the container stays
+  ffmpeg-free.
 
   ```
   fix the login bug on github.com/me/myrepo

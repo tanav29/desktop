@@ -55,9 +55,70 @@ export interface ObserveResult {
   dataUri: string;
 }
 
+/**
+ * One step in an input sequence. `actions()` runs a whole list of these in a
+ * single HTTP round-trip, which is the difference between one network hop per
+ * *task* and one per keystroke.
+ *
+ * Coordinates are absolute pixels on the framebuffer (1600x900 by default).
+ */
+export type Action =
+  /** Move the pointer. */
+  | { do: "move"; x: number; y: number }
+  /** Click a button (1 left, 2 middle, 3 right), optionally moving there first. */
+  | { do: "click"; x?: number; y?: number; button?: number; count?: number }
+  /** Press at (x1,y1), move to (x2,y2), release. */
+  | { do: "drag"; x1: number; y1: number; x2: number; y2: number; button?: number }
+  /** Wheel scroll, optionally over a specific point. */
+  | { do: "scroll"; dir: "up" | "down"; amount?: number; x?: number; y?: number }
+  /** Type text into the focused window, one keystroke at a time. */
+  | { do: "type"; text: string; delayMs?: number }
+  /** Send a keysym or combo, e.g. "Return", "ctrl+shift+t". Space-separated for a run of keys. */
+  | { do: "key"; keys: string; count?: number }
+  /** Put text on the clipboard and press ctrl+v — far faster than typing for long text. */
+  | { do: "paste"; text: string }
+  /** Activate the first visible window whose title matches (regex). */
+  | { do: "focus"; window: string }
+  /** Pause. */
+  | { do: "wait"; ms: number }
+  /** Block until a window title appears, or fail on timeout. */
+  | { do: "wait_for"; window: string; timeoutMs?: number };
+
+export interface ActionStep {
+  /** Index in the submitted list. */
+  i: number;
+  do: Action["do"] | null;
+  ok: boolean;
+  /** Failure reason, or absent on success. */
+  note?: string;
+}
+
+export interface ActionsResult {
+  /** True when every action succeeded. */
+  ok: boolean;
+  /** How many actions ran — the sequence stops at the first failure. */
+  ran: number;
+  steps: ActionStep[];
+  /** Index of the action that failed. Absent when `ok` is true. */
+  failedAt?: number;
+  /** Desktop state after the sequence, so a caller can skip a follow-up probe. */
+  state: { pointer: [number, number]; focused: string };
+}
+
+export interface PointerState {
+  x: number;
+  y: number;
+  /** The most recent click this daemon performed, or null if there hasn't been one. */
+  click: { x: number; y: number; button: number; at: number } | null;
+}
+
 const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_PORT = 8095;
 const IN_CONTAINER_WORKSPACE = "/workspace";
+/** Matches MAX_ACTIONS in daemon/daemon.py — rejected client-side for a clearer error. */
+const MAX_ACTIONS = 32;
+/** The daemon caps a sequence at 120s; leave room for the round-trip itself. */
+const ACTIONS_TIMEOUT_MS = 135_000;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 interface ApiJson {
@@ -115,6 +176,19 @@ class ApiClient {
     if (!res.ok) throw new Error(`HTTP ${res.status} ${path}: ${(await res.text()).slice(0, 500)}`);
     return Buffer.from(await res.arrayBuffer());
   }
+
+  async getJson(path: string, timeoutMs = 5_000): Promise<any> {
+    const res = await fetchWithTimeout(`${this.baseUrl}${path}`, {}, timeoutMs);
+    const text = await res.text();
+    let json: any = null;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      /* non-JSON body */
+    }
+    if (!res.ok && !json) throw new Error(`HTTP ${res.status} ${path}: ${text.slice(0, 500)}`);
+    return json;
+  }
 }
 
 function genTitle(): string {
@@ -149,17 +223,6 @@ export class Desktop {
     this.baseUrl = `http://${this.host}:${this.port}`;
     this.workspace = path.resolve(opts.workspace ?? "./workspace");
     this.api = new ApiClient(this.baseUrl);
-  }
-
-  /** POST to the daemon and throw on a non-zero command exit. Returns trimmed stdout. */
-  private async postX(route: string, body: unknown, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<string> {
-    const { json } = await this.api.post(route, body, timeoutMs);
-    const exit = json?.exit ?? 0;
-    if (exit !== 0) {
-      const note = (json?.stderr || json?.stdout || `exit ${exit}`).trim();
-      throw new Error(`${route} failed [exit ${exit}]: ${note}`);
-    }
-    return String(json?.stdout ?? "");
   }
 
   /** Run a shell command inside the computer. Returns trimmed stdout. */
@@ -205,9 +268,66 @@ export class Desktop {
     await this.api.post("/api/kill", { title }, DEFAULT_TIMEOUT_MS);
   }
 
+  /**
+   * Run a sequence of input actions in ONE round-trip. This is the primitive
+   * every other input method here is built on, and the one to reach for when
+   * driving a desktop over a network: a click-type-Enter flow costs one HTTP
+   * hop instead of three.
+   *
+   * The sequence stops at the first failing action — later actions are not
+   * attempted, since they were written assuming the earlier ones worked. The
+   * result says which index failed and why, and reports the pointer position
+   * and focused window afterwards so the caller usually needs no follow-up probe.
+   *
+   * ```ts
+   * await computer.actions([
+   *   { do: "wait_for", window: "Chromium" },
+   *   { do: "focus", window: "Chromium" },
+   *   { do: "click", x: 640, y: 61 },
+   *   { do: "type", text: "example.com" },
+   *   { do: "key", keys: "Return" },
+   * ]);
+   * ```
+   */
+  async actions(list: Action[], opts: CmdOptions = {}): Promise<ActionsResult> {
+    if (!Array.isArray(list) || list.length === 0) {
+      throw new Error("actions() needs at least one action");
+    }
+    if (list.length > MAX_ACTIONS) {
+      throw new Error(`actions() takes at most ${MAX_ACTIONS} actions per call (got ${list.length})`);
+    }
+    const timeoutMs = opts.timeoutMs ?? ACTIONS_TIMEOUT_MS;
+    const { json } = await this.api.post("/api/actions", { actions: list }, timeoutMs);
+    if (json?.error) throw new Error(`actions failed: ${json.error}`);
+    return json as ActionsResult;
+  }
+
+  /**
+   * actions() that throws on the first failure — the shape the single-action
+   * helpers below want, since they have no result worth returning.
+   */
+  private async act(...list: Action[]): Promise<ActionsResult> {
+    const result = await this.actions(list);
+    if (!result.ok) {
+      const step = result.steps[result.failedAt ?? result.steps.length - 1];
+      throw new Error(`${step?.do ?? "action"} failed: ${step?.note ?? "unknown error"}`);
+    }
+    return result;
+  }
+
+  /** Where the pointer is, plus the last click this daemon performed. */
+  async pointer(): Promise<PointerState> {
+    const json = await this.api.getJson("/api/pointer");
+    return {
+      x: Number(json?.x ?? 0),
+      y: Number(json?.y ?? 0),
+      click: json?.click ?? null,
+    };
+  }
+
   /** Move the pointer to absolute screen coordinates (x, y). */
   async mouse(x: number, y: number): Promise<void> {
-    await this.postX("/api/mouse", { x, y });
+    await this.act({ do: "move", x, y });
   }
 
   /**
@@ -215,7 +335,17 @@ export class Desktop {
    * Buttons: 1 left, 2 middle, 3 right, 4/5 wheel.
    */
   async click(button = 1, x?: number, y?: number): Promise<void> {
-    await this.postX("/api/click", { button, x, y });
+    await this.act({ do: "click", button, x, y });
+  }
+
+  /** Press at (x1, y1), drag to (x2, y2), release. */
+  async drag(x1: number, y1: number, x2: number, y2: number, button = 1): Promise<void> {
+    await this.act({ do: "drag", x1, y1, x2, y2, button });
+  }
+
+  /** Wheel-scroll `amount` notches, optionally over a specific point. */
+  async scroll(dir: "up" | "down", amount = 3, x?: number, y?: number): Promise<void> {
+    await this.act({ do: "scroll", dir, amount, x, y });
   }
 
   /**
@@ -224,12 +354,31 @@ export class Desktop {
    */
   async type(text: string, opts: TypeOptions = {}): Promise<void> {
     const delayMs = Math.min(Math.max(opts.delayMs ?? 30, 0), 500);
-    await this.postX("/api/type", { text, delayMs });
+    await this.act({ do: "type", text, delayMs });
+  }
+
+  /**
+   * Put text on the clipboard and press ctrl+v. Near-instant regardless of
+   * length, unlike type() — but it needs an app that honours ctrl+v, and it
+   * clobbers whatever was on the clipboard.
+   */
+  async paste(text: string): Promise<void> {
+    await this.act({ do: "paste", text });
   }
 
   /** Send a key or modifier combo, e.g. "Return", "ctrl+shift+t", "Super_L". */
   async key(keys: string): Promise<void> {
-    await this.postX("/api/key", { keys });
+    await this.act({ do: "key", keys });
+  }
+
+  /** Activate the first visible window whose title matches `window` (a regex). */
+  async focus(window: string): Promise<void> {
+    await this.act({ do: "focus", window });
+  }
+
+  /** Block until a window title appears. Throws on timeout. */
+  async waitFor(window: string, timeoutMs = 15_000): Promise<void> {
+    await this.act({ do: "wait_for", window, timeoutMs });
   }
 
   /** List visible window names on the desktop. */

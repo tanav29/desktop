@@ -6,6 +6,7 @@ Endpoints (JSON unless noted):
   POST /api/cmd      {"cmd", "timeoutMs"?}    -> {"exit","stdout","stderr"}
   POST /api/create   {"command", "title"?}    -> {"pid","log"}
   POST /api/kill     {"title"}                -> {"ok": true}
+  POST /api/actions  {"actions": [...]}       -> {"ok","failedAt"?,"steps","state"}
   POST /api/type     {"text", "delayMs"?}     -> {"exit","stdout","stderr"}
   POST /api/key      {"keys"}                 -> {"exit","stdout","stderr"}
   POST /api/mouse    {"x","y"}                -> {"exit","stdout","stderr"}
@@ -13,6 +14,11 @@ Endpoints (JSON unless noted):
   POST /api/windows  {}                       -> {"windows": ["Name", ...]}
   POST /api/screenshot {"name"?}              -> {"path","exit","stdout","stderr"}
   GET  /api/observe  ?width=&quality=         -> image/jpeg bytes
+  GET  /api/pointer                -> {"x","y","click":{"x","y","button","at"}}
+
+/api/actions runs a whole input sequence in one round-trip, which is the point:
+a caller driving this over the network pays one HTTP hop per *task* instead of
+one per keystroke. See ACTION_KINDS for the vocabulary.
 
 Every computer runs one of these (port 8095 by default; publish a different
 host port per computer). This is a root shell over the network — same trust
@@ -110,6 +116,284 @@ def run_argv(args, timeout: int = 60) -> dict:
 
 TITLE_RE = re.compile(r"[A-Za-z0-9._-]{1,64}")
 
+# ---------------------------------------------------------------------------
+# Pointer state
+# ---------------------------------------------------------------------------
+# Xvfb has no hardware cursor and x11vnc ships the cursor as a client-side
+# shape, so a noVNC viewer draws a cursor wherever the *human's* mouse is and
+# never where xdotool actually moved the pointer. The UI draws its own marker
+# instead, and polls these two values at ~10Hz to do it.
+
+_pointer = {"at": 0.0, "x": 0, "y": 0}
+POINTER_TTL = 0.06
+
+_last_click = {"x": 0, "y": 0, "button": 0, "at": 0.0}
+
+
+def _int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _clamp(value: int, lo: int, hi: int) -> int:
+    return max(lo, min(value, hi))
+
+
+def pointer_now(cached: bool = False):
+    """Current pointer position as (x, y). Cached briefly for the UI's poll."""
+    now = time.monotonic()
+    if cached and now - _pointer["at"] < POINTER_TTL:
+        return int(_pointer["x"]), int(_pointer["y"])
+    code, out, _ = capture_pipe(["xdotool", "getmouselocation", "--shell"], None, 5)
+    x, y = int(_pointer["x"]), int(_pointer["y"])
+    if code == 0:
+        for line in out.decode("utf-8", "replace").splitlines():
+            if line.startswith("X="):
+                x = _int(line[2:], x)
+            elif line.startswith("Y="):
+                y = _int(line[2:], y)
+    _pointer.update({"at": now, "x": x, "y": y})
+    return x, y
+
+
+def note_click(x: int, y: int, button: int) -> None:
+    """Record a click so the UI can draw a ripple where it landed."""
+    _last_click.update({"x": int(x), "y": int(y), "button": int(button), "at": time.time()})
+
+
+def focused_now() -> str:
+    """Title of the focused window, or "" when nothing is focused."""
+    code, out, _ = capture_pipe(
+        ["bash", "-c", "xdotool getactivewindow getwindowname 2>/dev/null"], None, 5
+    )
+    if code != 0:
+        return ""
+    text = out.decode("utf-8", "replace").strip()
+    return text.splitlines()[0][:120] if text else ""
+
+
+# ---------------------------------------------------------------------------
+# Action sequences (/api/actions)
+# ---------------------------------------------------------------------------
+
+MAX_ACTIONS = 32
+ACTIONS_BUDGET = 120.0
+ACTION_KINDS = (
+    "move", "click", "drag", "scroll", "type", "key", "paste", "focus", "wait", "wait_for",
+)
+
+
+def safe_window(name) -> str:
+    """Validate a window pattern.
+
+    The pattern reaches xdotool through an env var, never through a shell
+    string, so quoting is a non-issue here — length and control bytes are the
+    only things worth rejecting. Window titles legitimately contain spaces and
+    punctuation ("example.com - Chromium"), so TITLE_RE would be far too
+    strict for this field.
+    """
+    if not isinstance(name, str) or not name.strip():
+        return ""
+    if len(name) > 128 or any(ord(c) < 32 for c in name):
+        return ""
+    return name
+
+
+def run_action(action: dict, deadline: float):
+    """Run one action. Returns (ok, note). Never raises for bad input."""
+    kind = action.get("do")
+    if kind not in ACTION_KINDS:
+        return False, f"unknown action {kind!r} (expected one of: {', '.join(ACTION_KINDS)})"
+
+    left = deadline - time.monotonic()
+    if left <= 0:
+        return False, "sequence ran out of time before this action"
+    budget = max(1, int(min(left, 60)))
+
+    def shell(script: str, env=None, timeout=None):
+        r = run(script, timeout or budget, env)
+        if r["exit"] == 0:
+            return True, ""
+        why = (r["stderr"] or r["stdout"]).strip()
+        return False, (why[:300] or f"exit {r['exit']}")
+
+    def argv(args):
+        r = run_argv(args, budget)
+        if r["exit"] == 0:
+            return True, ""
+        why = (r["stderr"] or r["stdout"]).strip()
+        return False, (why[:300] or f"exit {r['exit']}")
+
+    if kind == "move":
+        x = _clamp(_int(action.get("x")), -1, 8192)
+        y = _clamp(_int(action.get("y")), -1, 8192)
+        return argv(["xdotool", "mousemove", str(x), str(y)])
+
+    if kind == "click":
+        button = _clamp(_int(action.get("button"), 1), 1, 9)
+        count = _clamp(_int(action.get("count"), 1), 1, 10)
+        args = ["xdotool"]
+        has_xy = action.get("x") is not None and action.get("y") is not None
+        if has_xy:
+            x = _clamp(_int(action.get("x")), 0, 8192)
+            y = _clamp(_int(action.get("y")), 0, 8192)
+            args += ["mousemove", "--sync", str(x), str(y)]
+        args += ["click", "--repeat", str(count), "--delay", "120", str(button)]
+        ok, note = argv(args)
+        cx, cy = (x, y) if has_xy else pointer_now()
+        if ok:
+            note_click(cx, cy, button)
+        return ok, note
+
+    if kind == "drag":
+        x1 = _clamp(_int(action.get("x1")), 0, 8192)
+        y1 = _clamp(_int(action.get("y1")), 0, 8192)
+        x2 = _clamp(_int(action.get("x2")), 0, 8192)
+        y2 = _clamp(_int(action.get("y2")), 0, 8192)
+        button = _clamp(_int(action.get("button"), 1), 1, 3)
+        mx, my = (x1 + x2) // 2, (y1 + y2) // 2
+        # The midpoint hop and the sleeps are not decoration: apps that
+        # implement drag by watching motion events ignore a press/release pair
+        # that teleports, so a two-point drag silently does nothing.
+        return argv([
+            "xdotool",
+            "mousemove", "--sync", str(x1), str(y1),
+            "sleep", "0.1",
+            "mousedown", str(button),
+            "sleep", "0.1",
+            "mousemove", "--sync", str(mx), str(my),
+            "sleep", "0.05",
+            "mousemove", "--sync", str(x2), str(y2),
+            "sleep", "0.1",
+            "mouseup", str(button),
+        ])
+
+    if kind == "scroll":
+        direction = str(action.get("dir") or "down").lower()
+        if direction not in ("up", "down"):
+            return False, "scroll dir must be 'up' or 'down'"
+        amount = _clamp(_int(action.get("amount"), 3), 1, 25)
+        button = "4" if direction == "up" else "5"
+        args = ["xdotool"]
+        if action.get("x") is not None and action.get("y") is not None:
+            args += ["mousemove", "--sync",
+                     str(_clamp(_int(action.get("x")), 0, 8192)),
+                     str(_clamp(_int(action.get("y")), 0, 8192))]
+        args += ["click", "--repeat", str(amount), "--delay", "60", button]
+        return argv(args)
+
+    if kind == "type":
+        text = action.get("text")
+        if not isinstance(text, str) or text == "":
+            return False, "type needs non-empty text"
+        delay = _clamp(_int(action.get("delayMs"), 12), 0, 500)
+        return shell(
+            'xdotool type --delay "$DELAY" -- "$TEXT"',
+            {"TEXT": text, "DELAY": str(delay)},
+            timeout=max(budget, min(60, 5 + len(text) // 20)),
+        )
+
+    if kind == "key":
+        keys = action.get("keys")
+        if not isinstance(keys, str) or not keys.strip() or len(keys) > 200:
+            return False, "key needs a keysym string, e.g. 'Return' or 'ctrl+shift+t'"
+        count = _clamp(_int(action.get("count"), 1), 1, 50)
+        # run_argv does not go through a shell, so keysyms need no quoting.
+        return argv(["xdotool", "key", "--repeat", str(count), "--delay", "40"] + keys.split())
+
+    if kind == "paste":
+        text = action.get("text")
+        if not isinstance(text, str) or text == "":
+            return False, "paste needs non-empty text"
+        # Two things worth knowing here:
+        #  * xclip forks and stays alive to own the selection, so its stdout and
+        #    stderr must be detached — otherwise it holds the pipe open, we never
+        #    see EOF, and the step dies on the timeout instead of returning.
+        #  * terminals bind paste to ctrl+shift+v; ctrl+v is a no-op there. Read
+        #    the focused window's process name to pick the right combo, so the
+        #    caller doesn't have to care which kind of window it is. (xdotool
+        #    3.20160805 has no getwindowclassname, hence the /proc route.)
+        return shell(
+            'printf %s "$TEXT" | xclip -selection clipboard >/dev/null 2>&1 || exit 1; '
+            'pid=$(xdotool getactivewindow getwindowpid 2>/dev/null); '
+            'comm=$(cat "/proc/$pid/comm" 2>/dev/null); '
+            'case "$comm" in *term*) combo=ctrl+shift+v ;; *) combo=ctrl+v ;; esac; '
+            'xdotool key --clearmodifiers "$combo"',
+            {"TEXT": text},
+        )
+
+    if kind == "focus":
+        window = safe_window(action.get("window"))
+        if not window:
+            return False, "focus needs a window name (<=128 chars, no control characters)"
+        return shell(
+            'wid=$(xdotool search --onlyvisible --name "$WIN" 2>/dev/null | head -1); '
+            '[ -n "$wid" ] || { echo "no visible window matching: $WIN" >&2; exit 1; }; '
+            'xdotool windowactivate --sync "$wid"',
+            {"WIN": window},
+        )
+
+    if kind == "wait":
+        ms = _clamp(_int(action.get("ms"), 500), 0, 30_000)
+        time.sleep(min(ms / 1000.0, max(0.0, deadline - time.monotonic())))
+        return True, ""
+
+    if kind == "wait_for":
+        window = safe_window(action.get("window"))
+        if not window:
+            return False, "wait_for needs a window name (<=128 chars, no control characters)"
+        timeout_ms = _clamp(_int(action.get("timeoutMs"), 15_000), 250, 60_000)
+        timeout_ms = min(timeout_ms, int(max(0.25, deadline - time.monotonic()) * 1000))
+        return shell(
+            'end=$(( $(date +%s%3N) + TIMEOUT )); '
+            'while :; do '
+            '  wid=$(xdotool search --onlyvisible --name "$WIN" 2>/dev/null | head -1); '
+            '  if [ -n "$wid" ]; then exit 0; fi; '
+            '  if [ "$(date +%s%3N)" -ge "$end" ]; then '
+            '    echo "timed out after ${TIMEOUT}ms waiting for window: $WIN" >&2; exit 1; '
+            '  fi; '
+            '  sleep 0.25; '
+            'done',
+            {"WIN": window, "TIMEOUT": str(timeout_ms)},
+            timeout=int(timeout_ms / 1000) + 5,
+        )
+
+    return False, f"action {kind!r} not implemented"
+
+
+def run_actions(actions: list) -> dict:
+    """Run actions in order, stopping at the first failure."""
+    deadline = time.monotonic() + ACTIONS_BUDGET
+    steps = []
+    failed_at = None
+
+    for i, action in enumerate(actions):
+        if not isinstance(action, dict):
+            steps.append({"i": i, "do": None, "ok": False, "note": "each action must be an object"})
+            failed_at = i
+            break
+        ok, note = run_action(action, deadline)
+        step = {"i": i, "do": action.get("do"), "ok": ok}
+        if note:
+            step["note"] = note
+        steps.append(step)
+        if not ok:
+            failed_at = i
+            break
+
+    x, y = pointer_now()
+    result = {
+        "ok": failed_at is None,
+        "ran": len(steps),
+        "steps": steps,
+        "state": {"pointer": [x, y], "focused": focused_now()},
+    }
+    if failed_at is not None:
+        result["failedAt"] = failed_at
+    return result
+
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "computer-api"
@@ -170,6 +454,10 @@ class Handler(BaseHTTPRequestHandler):
                 note = err.decode("utf-8", "replace").strip() or "no frame"
                 return self._json(500, {"error": note[:500]})
             return self._send(200, out, "image/jpeg")
+        if route in ("/api/pointer", "/pointer"):
+            x, y = pointer_now(cached=True)
+            click = dict(_last_click) if _last_click["at"] else None
+            return self._json(200, {"x": x, "y": y, "click": click})
         self._json(404, {"error": "not found"})
 
     def do_POST(self) -> None:
@@ -221,6 +509,14 @@ class Handler(BaseHTTPRequestHandler):
             )
             return self._json(200, {"ok": True})
 
+        if route in ("/api/actions", "/actions"):
+            actions = body.get("actions")
+            if not isinstance(actions, list) or not actions:
+                return self._json(400, {"error": "actions must be a non-empty array"})
+            if len(actions) > MAX_ACTIONS:
+                return self._json(400, {"error": f"at most {MAX_ACTIONS} actions per request"})
+            return self._json(200, run_actions(actions))
+
         if route in ("/api/type", "/type"):
             text = body.get("text", "")
             if not isinstance(text, str):
@@ -243,14 +539,26 @@ class Handler(BaseHTTPRequestHandler):
         if route in ("/api/click", "/click"):
             button = int(body.get("button", 1))
             args = ["xdotool"]
-            if body.get("x") is not None and body.get("y") is not None:
+            has_xy = body.get("x") is not None and body.get("y") is not None
+            if has_xy:
                 args += ["mousemove", str(int(body["x"])), str(int(body["y"]))]
             args += ["click", str(button)]
-            return self._json(200, run_argv(args))
+            result = run_argv(args)
+            if result["exit"] == 0:
+                cx, cy = (
+                    (int(body["x"]), int(body["y"])) if has_xy else pointer_now()
+                )
+                note_click(cx, cy, button)
+            return self._json(200, result)
 
         if route in ("/api/windows", "/windows"):
+            # `%@` is load-bearing: a command chained after `search` defaults to
+            # acting on `%1`, the first match only — so without it this returned
+            # a single name, or nothing at all when the first match was unnamed.
             code, out, err = capture_pipe(
-                ["xdotool", "search", "--onlyvisible", "--name", ".*", "getwindowname"], None, 30
+                ["xdotool", "search", "--onlyvisible", "--name", ".", "getwindowname", "%@"],
+                None,
+                30,
             )
             names = [
                 ln.strip()
