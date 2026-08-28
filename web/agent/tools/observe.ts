@@ -28,7 +28,7 @@ const STATE_SCRIPT = `
   printf 'pointer: '
   xdotool getmouselocation 2>/dev/null | grep -oE 'x:[0-9]+ y:[0-9]+'
   printf 'apps:\\n'
-  pgrep -af 'xfce4-terminal|/opt/chrome|chromium' 2>/dev/null | head -n 8 || true
+  pgrep -af 'xterm|/opt/chrome|chromium' 2>/dev/null | head -n 8 || true
 `;
 
 export default defineTool({

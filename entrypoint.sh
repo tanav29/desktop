@@ -6,11 +6,6 @@ export RESOLUTION="${RESOLUTION:-1600x900}"
 
 mkdir -p /workspace
 
-# Xvfb refuses to start if a previous run left its lock behind ("Server is
-# already active for display N"). A plain `docker restart` reuses the container
-# filesystem, so /tmp/.X<n>-lock and the socket survive and every restart came
-# up with a dead desktop behind a healthy-looking daemon. Clear them first —
-# nothing else is using this display inside our own container.
 DISPLAY_NUM="${DISPLAY#:}"
 DISPLAY_NUM="${DISPLAY_NUM%%.*}"
 if [ -n "${DISPLAY_NUM}" ]; then
@@ -24,8 +19,6 @@ echo "[entrypoint] Starting Xvfb on ${DISPLAY} (${RESOLUTION})"
 Xvfb "${DISPLAY}" -screen 0 "${RESOLUTION}x24" -nolisten tcp &
 XVFB_PID=$!
 
-# Wait for the display to actually answer. Failing loudly here beats booting
-# the rest of the stack against a display that will never exist.
 for _ in $(seq 1 30); do
     if xdpyinfo -display "${DISPLAY}" >/dev/null 2>&1; then
         break
@@ -69,9 +62,6 @@ trap cleanup EXIT INT TERM
 
 echo "[entrypoint] Ready at http://localhost:6080/vnc.html"
 
-# Supervise the stack. If any piece dies the desktop is useless, so exit and
-# let Docker's restart policy bring up a clean container instead of lingering
-# in a half-dead state that still answers on 6080.
 while :; do
     for entry in "Xvfb:${XVFB_PID}" "xfce4-session:${SESSION_PID}" \
                  "x11vnc:${X11VNC_PID}" "noVNC:${WEBSOCKIFY_PID}" "api:${API_PID}"; do

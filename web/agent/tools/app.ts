@@ -20,7 +20,7 @@ export default defineTool({
       .string()
       .min(1)
       .optional()
-      .describe("For launch: e.g. 'xfce4-terminal' or 'chromium https://example.com'"),
+      .describe("For launch: e.g. 'xterm' or 'chromium https://example.com'"),
     title: z
       .string()
       .regex(/^[A-Za-z0-9._-]{1,48}$/)

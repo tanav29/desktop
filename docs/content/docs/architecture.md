@@ -18,7 +18,7 @@ description: How the image, daemon, and SDK fit together — and why every call 
 │   │    │                                      │      │
 │   │  XFCE on Xvfb :99  ·  xdotool             │      │
 │   │  x11vnc → websockify → noVNC :6080        │      │
-│   │  Chromium · xfce4-terminal · ImageMagick  │      │
+│   │  Chromium · xterm · ImageMagick  │      │
 │   └───────────────────────────────────────────┘      │
 │                           │                          │
 │              ./workspace persists on host            │

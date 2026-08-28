@@ -2,7 +2,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { Desktop } from "./dist/index.js";
 
 const d = new Desktop({ workspace: "../workspace" });
-const t = await d.create("xfce4-terminal");
+const t = await d.create("xterm");
 console.log("created:", t);
 
 let wid = "";

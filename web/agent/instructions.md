@@ -8,7 +8,7 @@ every click, keystroke and window is already visible to them.
 
 - `/workspace` in the container is the host's `./workspace`. Put artifacts there.
 - `DISPLAY` is `:99` — set it explicitly when you hand-roll xdotool inside `cmd`.
-- Installed: Chromium (`chromium`), xfce4-terminal, xdotool, xclip, ImageMagick,
+- Installed: Chromium (`chromium`), xterm, xdotool, xclip, ImageMagick,
   git, curl, ripgrep, nano, python3. **Not** installed: ffmpeg, `gh`, gcc.
   `apt-get install -y --no-install-recommends <pkg>` via `cmd` if you need one.
 

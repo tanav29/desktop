@@ -106,7 +106,7 @@ For motion instead of stills, see [`live()` and `frames()`](/docs/sdk#live-frame
 **Visible** (for humans watching the noVNC view):
 
 ```bash
-docker exec -d linux-desktop bash -c 'DISPLAY=:99 xfce4-terminal --title=worker-1 --command=bash'
+docker exec -d linux-desktop bash -c 'DISPLAY=:99 xterm -title worker-1 -e bash'
 docker exec -d linux-desktop bash -c 'DISPLAY=:99 /opt/chrome/chrome --no-sandbox --disable-dev-shm-usage --no-first-run https://example.com'
 ```
 
@@ -126,7 +126,7 @@ Tips:
 ## Killing apps
 
 ```bash
-docker exec linux-desktop bash -c 'pkill -f "xfce4-terminal.*worker-1"'  # by command line
+docker exec linux-desktop bash -c 'pkill -f "xterm.*worker-1"'  # by command line
 docker exec linux-desktop xdotool search --name "worker-1" windowkill    # by window
 docker compose down && docker compose up -d                              # reset the whole box
 ```

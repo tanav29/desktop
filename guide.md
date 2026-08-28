@@ -51,7 +51,7 @@ The desktop is reachable at <http://localhost:6080/vnc.html>.
 |---|---|
 | Build | not preinstalled — `apt-get install -y --no-install-recommends build-essential` if a task must compile |
 | Languages | python 3 |
-| Editor / shell | `nano`, `bash` (terminal: xfce4-terminal) |
+| Editor / shell | `nano`, `bash` (terminal: xterm) |
 | VCS | `git` |
 | Network | `curl`, `ca-certificates` |
 | Search | `ripgrep` |
@@ -128,7 +128,7 @@ has no hardware cursor, so a VNC viewer can't show it).
 ### 2.1 Keyboard
 
 ```bash
-docker exec -d linux-desktop bash -c 'DISPLAY=:99 xfce4-terminal --title=Demo --command=bash'   # open terminal
+docker exec -d linux-desktop bash -c 'DISPLAY=:99 xterm -title Demo -e bash'   # open terminal
 docker exec linux-desktop xdotool key --window "$(xdotool getactivewindow)" ctrl+c
 docker exec linux-desktop xdotool type --delay 50 'echo hello world'
 ```
@@ -199,7 +199,7 @@ before/after xdotool actions.
 ### 3.1 Visible app for humans / demo
 
 ```bash
-docker exec -d linux-desktop bash -c 'DISPLAY=:99 xfce4-terminal --title=Demo --command=bash'
+docker exec -d linux-desktop bash -c 'DISPLAY=:99 xterm -title Demo -e bash'
 docker exec -d linux-desktop bash -c 'DISPLAY=:99 /opt/chrome/chrome --no-sandbox --disable-dev-shm-usage --no-first-run https://example.com'
 ```
 
@@ -211,7 +211,7 @@ debugging port — the 9222/CDP surface has been removed.
 One window per worker; kill by window title:
 
 ```bash
-docker exec -d linux-desktop bash -c 'DISPLAY=:99 xfce4-terminal --title=worker-1 --command=bash'
+docker exec -d linux-desktop bash -c 'DISPLAY=:99 xterm -title worker-1 -e bash'
 docker exec linux-desktop xdotool search --name "worker-1" windowkill
 ```
 
@@ -226,7 +226,7 @@ Rules of thumb:
 ## 4. Killing apps
 
 ```bash
-docker exec linux-desktop bash -c 'pkill -f "xfce4-terminal.*worker-1"'  # by command line
+docker exec linux-desktop bash -c 'pkill -f "xterm.*worker-1"'  # by command line
 docker exec linux-desktop xdotool search --name "worker-1" windowkill    # by window
 docker exec -d linux-desktop bash -c 'killall chromium'                  # everything
 docker compose down && docker compose up -d                              # reset the whole box
@@ -286,7 +286,7 @@ curl -sX POST localhost:8095/api/actions -H 'content-type: application/json' \
 curl -s localhost:8095/api/pointer
 
 # xdotool quick reference
-docker exec -d linux-desktop bash -c 'DISPLAY=:99 xfce4-terminal --title=Demo --command=bash'
+docker exec -d linux-desktop bash -c 'DISPLAY=:99 xterm -title Demo -e bash'
 docker exec linux-desktop xdotool type --delay 50 "text"
 docker exec linux-desktop xdotool mousemove 800 450 click 1
 docker exec linux-desktop bash -c 'xdotool search --name "Terminal" windowactivate --sync'
@@ -298,6 +298,6 @@ docker exec linux-desktop import -window root -display :99 /workspace/shot.png
 docker exec linux-desktop bash -c 'apt-get install -y --no-install-recommends build-essential && printf "int main(){return 0;}" > /workspace/t.c && gcc /workspace/t.c -o /workspace/t'
 
 # launch / kill an app by title
-docker exec -d linux-desktop bash -c 'DISPLAY=:99 xfce4-terminal --title=worker-1'
+docker exec -d linux-desktop bash -c 'DISPLAY=:99 xterm -title worker-1'
 docker exec linux-desktop bash -c 'pkill -f "worker-1"'
 ```

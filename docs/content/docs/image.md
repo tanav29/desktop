@@ -30,7 +30,7 @@ Everything an agent needs to do real work:
 | Category | Tools |
 |---|---|
 | Languages | Python 3 |
-| Editor / shell | `nano`, `bash` (terminal app: xfce4-terminal) |
+| Editor / shell | `nano`, `bash` (terminal app: xterm) |
 | VCS | `git` |
 | Network | `curl`, `ca-certificates` |
 | Search | `ripgrep` |

@@ -64,7 +64,7 @@ Launches a detached app on the desktop with a unique title so it can be found
 and killed later.
 
 ```ts
-await computer.create("xfce4-terminal", { title: "worker-1" });
+await computer.create("xterm", { title: "worker-1" });
 await computer.create("chromium https://example.com", { title: "web-1" });
 ```
 

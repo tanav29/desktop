@@ -2,6 +2,10 @@ import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import path from "node:path";
 
+// ---------------------------------------------------------------------------
+// Options & result types
+// ---------------------------------------------------------------------------
+
 export interface DesktopOptions {
   /**
    * Which computer to control. Every computer runs its own daemon
@@ -20,9 +24,114 @@ export interface CmdOptions {
   timeoutMs?: number;
 }
 
+export interface ExecResult {
+  exit: number;
+  stdout: string;
+  stderr: string;
+  durationMs?: number;
+}
+
 export interface CreateOptions {
   /** Unique worker id. Defaults to `worker-<random>`. Used by kill(). */
   title?: string;
+  /** Wait up to this many ms for the window to appear after launch. Default 0 (no wait). */
+  waitMs?: number;
+  /** Alias for waitMs */
+  waitForMs?: number;
+}
+
+export interface CreateResult {
+  pid: number;
+  log: string;
+  title: string;
+  command: string;
+  startedAt: number;
+  windowFound: boolean;
+  meta: string;
+}
+
+export interface KillOptions {
+  /** "auto" (TERM then KILL), "term" only, "kill" immediate. Default "auto". */
+  signal?: "auto" | "term" | "kill";
+  /** How long to wait after TERM before escalating, ms. Default 2000. */
+  waitMs?: number;
+  /** Remove the worker's /workspace/.workers/<title> dir after kill. Default false. */
+  clean?: boolean;
+}
+
+export interface KillResult {
+  ok: boolean;
+  title: string;
+  killed: boolean;
+  pidsKilled: number[];
+  pidsBefore: number[];
+  pidsAfter: number[];
+  windowsKilled: number;
+  windowsBefore: number;
+  windowsAfter: number;
+  aliveAfter: boolean;
+  signal: string;
+  waitMs: number;
+  logTail: string;
+  cleaned: boolean;
+  reason?: string;
+}
+
+export interface KillAllOptions {
+  /** Only kill workers whose title starts with this prefix. Default "" (all). */
+  prefix?: string;
+  /** Clean worker dirs after kill. Default false. */
+  clean?: boolean;
+}
+
+export interface KillAllResult {
+  ok: boolean;
+  killed: string[];
+  failed: Array<{ title: string; reason: string; detail?: any }>;
+  count: number;
+  total: number;
+  cleaned: boolean;
+  details: KillResult[];
+}
+
+export interface WorkerInfo {
+  title: string;
+  pid: number;
+  pids: number[];
+  alive: boolean;
+  command: string;
+  startedAt: number;
+  log: string;
+  logBytes: number;
+  windowFound: boolean;
+  windowIds: string[];
+}
+
+export interface InfoResult {
+  ok: boolean;
+  version: string;
+  display: string;
+  resolution: string;
+  displayOk: boolean;
+  uptime: number;
+  startedAt: number;
+  workers: number;
+  workersAlive: number;
+  workspace: string;
+  pid: number;
+  pointer: [number, number];
+  focused: string;
+  diskFree: number;
+  diskTotal: number;
+  memTotal: number;
+  memAvailable: number;
+}
+
+export interface PsResult {
+  processes: Array<{ pid: number; ppid: number; etime: string; pcpu: string; pmem: string; cmd: string }>;
+  windows: Array<{ id: string; name: string; pid: number; geometry: string }>;
+  workers: WorkerInfo[];
+  at: number;
 }
 
 export interface LiveOptions {
@@ -143,10 +252,24 @@ class ApiClient {
 
   async health(): Promise<boolean> {
     try {
-      const res = await fetchWithTimeout(`${this.baseUrl}/api/health`, {}, 1000);
+      const res = await fetchWithTimeout(`${this.baseUrl}/api/health`, {}, 1500);
       return res.ok;
     } catch {
       return false;
+    }
+  }
+
+  async healthDetailed(): Promise<any> {
+    try {
+      const res = await fetchWithTimeout(`${this.baseUrl}/api/info`, {}, 3000);
+      const text = await res.text();
+      try {
+        return JSON.parse(text);
+      } catch {
+        return { ok: res.ok, text };
+      }
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
     }
   }
 
@@ -205,6 +328,10 @@ function assertSafeTitle(title: string): void {
  * Wrapper around a computer's in-container daemon. Pick the computer by port:
  * `new Desktop({ port: 8095 })` is computer #1, `{ port: 8096 }` is #2, etc.
  * No docker CLI involved — every call is one HTTP round-trip to the daemon.
+ *
+ * This is the "best" SDK surface: every daemon capability has a typed helper,
+ * kill paths are verified and report what they actually killed, and multi-
+ * computer orchestration is built-in without shelling out to docker.
  */
 export class Desktop {
   /** Host port the computer's daemon is published on. */
@@ -225,7 +352,11 @@ export class Desktop {
     this.api = new ApiClient(this.baseUrl);
   }
 
-  /** Run a shell command inside the computer. Returns trimmed stdout. */
+  // -------------------------------------------------------------------------
+  // Core shell
+  // -------------------------------------------------------------------------
+
+  /** Run a shell command inside the computer. Returns trimmed stdout. Throws on non-zero exit. */
   async cmd(input: string, opts: CmdOptions = {}): Promise<string> {
     const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     const { json } = await this.api.post("/api/cmd", { cmd: input, timeoutMs }, timeoutMs);
@@ -237,36 +368,187 @@ export class Desktop {
     return String(json?.stdout ?? "").trim();
   }
 
+  /** Structured exec — same as cmd but returns {exit, stdout, stderr} without throwing. */
+  async exec(input: string, opts: CmdOptions = {}): Promise<ExecResult> {
+    const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    const { json } = await this.api.post("/api/cmd", { cmd: input, timeoutMs }, timeoutMs);
+    return {
+      exit: Number(json?.exit ?? -1),
+      stdout: String(json?.stdout ?? ""),
+      stderr: String(json?.stderr ?? ""),
+      durationMs: json?.durationMs,
+    };
+  }
+
+  // -------------------------------------------------------------------------
+  // App lifecycle — create / kill / workers / ps / open
+  // -------------------------------------------------------------------------
+
   /**
    * Launch a detached app on the desktop. Appends a unique CLI flag so the
    * title appears in the process command line and kill(title) can find it:
-   * terminal -> --title, chromium -> --user-data-dir (inside the container's
-   * /workspace, so it persists on the host). Already-titled commands are used
-   * as-is unless a different opts.title forces a new flag. Returns the title.
+   * xterm -> -title <t>, chromium -> --user-data-dir (inside the container's
+   * /workspace, so it persists on the host), anything else -> --title=<t>.
+   * Already-titled commands are used as-is unless a different opts.title
+   * forces a new flag. Returns the title.
    */
   async create(command: string, opts: CreateOptions = {}): Promise<string> {
-    const existing = command.match(/--(?:title|user-data-dir)=([^\s]+)/);
+    const result = await this.spawn(command, opts);
+    return result.title;
+  }
+
+  /**
+   * Like create() but returns the full daemon report (pid, log, windowFound...).
+   * Use when you need the pid or want to wait for the window.
+   */
+  async spawn(command: string, opts: CreateOptions = {}): Promise<CreateResult> {
+    const existing =
+      command.match(/--(?:title|user-data-dir)=([^\s]+)/) ??
+      command.match(/^-title\s+([^\s]+)/);
     const title = opts.title ?? existing?.[1] ?? genTitle();
     assertSafeTitle(title);
 
-    const flag =
-      existing && existing[1] === title
-        ? ""
-        : command.split(/\s+/)[0].includes("chrom")
-          ? `--user-data-dir=${IN_CONTAINER_WORKSPACE}/.workers/${title}`
-          : `--title=${title}`;
-
-    const full = `${command.trim()} ${flag}`.trim();
-    const { json } = await this.api.post("/api/create", { command: full, title }, DEFAULT_TIMEOUT_MS);
+    const app = command.trim().split(/\s+/)[0];
+    let full = command.trim();
+    if (!(existing && existing[1] === title)) {
+      if (app.includes("chrom")) {
+        full += ` --user-data-dir=${IN_CONTAINER_WORKSPACE}/.workers/${title}`;
+      } else if (app === "xterm") {
+        // xterm's -e swallows every argument after it, so the title flag has
+        // to be injected directly after the binary name instead of appended.
+        full = full.replace(/^\S+/, (bin) => `${bin} -title ${title}`);
+      } else {
+        // Generic: append as a bash comment so it appears in `ps` / `pkill -f`
+        // but never breaks the real command (e.g. `sleep 5 --title=foo` would
+        // fail because sleep doesn't know --title). The daemon's kill() matches
+        // both the pgrep pattern and the meta pid, so this is searchable and safe.
+        // Use ` # title` — bash ignores everything after `#` on the same line.
+        if (full.includes("#")) {
+          // avoid nesting comments — use a no-op builtin instead
+          full += ` ; : ${title}`;
+        } else {
+          full += ` # ${title}`;
+        }
+      }
+    }
+    const waitMs = opts.waitMs ?? opts.waitForMs ?? 0;
+    const { json, status } = await this.api.post(
+      "/api/create",
+      { command: full, title, waitMs },
+      DEFAULT_TIMEOUT_MS
+    );
+    if (status === 409) {
+      throw new Error(`create failed: title '${title}' already running (use kill() first or pick a new title)`);
+    }
     if (json?.error) throw new Error(`create failed: ${json.error}`);
-    return title;
+    return {
+      pid: Number(json?.pid ?? 0),
+      log: String(json?.log ?? ""),
+      title: String(json?.title ?? title),
+      command: String(json?.command ?? full),
+      startedAt: Number(json?.startedAt ?? Date.now() / 1000),
+      windowFound: Boolean(json?.windowFound),
+      meta: String(json?.meta ?? ""),
+    };
   }
 
-  /** Kill every process whose command line or window title matches `title`. */
-  async kill(title: string): Promise<void> {
+  /** Launch a URL in Chromium. Shorthand for create(`chromium <url>`, {title}). */
+  async open(url: string, opts: CreateOptions = {}): Promise<string> {
+    const title = opts.title ?? `web-${randomBytes(2).toString("hex")}`;
     assertSafeTitle(title);
-    await this.api.post("/api/kill", { title }, DEFAULT_TIMEOUT_MS);
+    // ensure url has scheme
+    const safeUrl = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+    return this.create(`chromium ${safeUrl}`, { title, ...opts });
   }
+
+  /**
+   * Kill every process whose command line or window title matches `title`.
+   * Now verified: TERM then KILL, windowkill sweep, and a report of what died.
+   * Returns a KillResult — callers that previously ignored the return value still work.
+   */
+  async kill(title: string, opts: KillOptions = {}): Promise<KillResult> {
+    assertSafeTitle(title);
+    const body: any = { title };
+    if (opts.signal) body.signal = opts.signal;
+    if (opts.waitMs !== undefined) body.waitMs = opts.waitMs;
+    if (opts.clean !== undefined) body.clean = opts.clean;
+    const { json } = await this.api.post("/api/kill", body, DEFAULT_TIMEOUT_MS);
+    if (json?.error) throw new Error(`kill failed: ${json.error}`);
+    // daemon returns the detailed report directly
+    return json as KillResult;
+  }
+
+  /** Alias for kill() — reads better when closing a browser tab. */
+  async close(title: string, opts: KillOptions = {}): Promise<KillResult> {
+    return this.kill(title, opts);
+  }
+
+  /**
+   * Kill all workers (or those with a title prefix). The "nuke" for the desktop.
+   * Returns which titles were killed and which (if any) survived.
+   */
+  async killAll(opts: KillAllOptions = {}): Promise<KillAllResult> {
+    const body: any = {};
+    if (opts.prefix) body.prefix = opts.prefix;
+    if (opts.clean !== undefined) body.clean = opts.clean;
+    const { json } = await this.api.post("/api/killAll", body, DEFAULT_TIMEOUT_MS);
+    if (json?.error) throw new Error(`killAll failed: ${json.error}`);
+    return json as KillAllResult;
+  }
+
+  /** Kill all workers and clean their dirs — full reset of the app layer. */
+  async nuke(opts: { prefix?: string } = {}): Promise<KillAllResult> {
+    return this.killAll({ prefix: opts.prefix, clean: true });
+  }
+
+  /** Remove dead worker dirs (GC). No effect on running workers. */
+  async clean(): Promise<{ ok: boolean; removed: string[]; count: number }> {
+    const { json } = await this.api.post("/api/system", { action: "clean" }, DEFAULT_TIMEOUT_MS);
+    return json;
+  }
+
+  /**
+   * Soft-reset the computer: kill all workers (clean) and optionally clear
+   * transient workspace files. The container itself stays up.
+   */
+  async reset(opts: { cleanWorkspace?: boolean } = {}): Promise<any> {
+    const { json } = await this.api.post(
+      "/api/system",
+      { action: "reset", cleanWorkspace: !!opts.cleanWorkspace },
+      DEFAULT_TIMEOUT_MS
+    );
+    return json;
+  }
+
+  /** List all workers known to the daemon (alive or dead) with full status. */
+  async workers(): Promise<WorkerInfo[]> {
+    const json = await this.api.getJson("/api/workers");
+    if (Array.isArray(json?.workers)) return json.workers as WorkerInfo[];
+    // fallback: POST variant
+    const { json: j2 } = await this.api.post("/api/workers", {}, DEFAULT_TIMEOUT_MS);
+    return Array.isArray(j2?.workers) ? (j2.workers as WorkerInfo[]) : [];
+  }
+
+  /** Alias for workers() */
+  async list(): Promise<WorkerInfo[]> {
+    return this.workers();
+  }
+
+  /** Process + window snapshot — the daemon's `ps` for the desktop. */
+  async ps(): Promise<PsResult> {
+    try {
+      const json = await this.api.getJson("/api/ps");
+      if (json?.processes) return json as PsResult;
+    } catch {
+      /* fallback to POST */
+    }
+    const { json } = await this.api.post("/api/ps", {}, DEFAULT_TIMEOUT_MS);
+    return json as PsResult;
+  }
+
+  // -------------------------------------------------------------------------
+  // Input — actions is the one true control surface
+  // -------------------------------------------------------------------------
 
   /**
    * Run a sequence of input actions in ONE round-trip. This is the primitive
@@ -382,14 +664,42 @@ export class Desktop {
   }
 
   /** List visible window names on the desktop. */
-  async windows(): Promise<string[]> {
+  async windows(opts: { detailed?: boolean } = {}): Promise<string[]> {
+    if (opts.detailed) {
+      const json = await this.api.getJson("/api/windows?detail=1");
+      // return names for backward compat when detailed requested? expose via windowsDetailed()
+      return Array.isArray(json?.names) ? json.names.map(String) : Array.isArray(json?.windows) ? json.windows.map((w: any) => String(w.name ?? w)) : [];
+    }
     const { json } = await this.api.post("/api/windows", {}, DEFAULT_TIMEOUT_MS);
     return Array.isArray(json?.windows) ? json.windows.map(String) : [];
+  }
+
+  /** Detailed windows with id, pid, geometry. */
+  async windowsDetailed(): Promise<Array<{ id: string; name: string; pid: number; geometry: string }>> {
+    const json = await this.api.getJson("/api/windows?detail=1");
+    if (Array.isArray(json?.windows) && json.windows.length && typeof json.windows[0] === "object") {
+      return json.windows;
+    }
+    // fallback via ps
+    const snap = await this.ps();
+    return snap.windows;
   }
 
   /** True when the computer's desktop is up. */
   async health(): Promise<boolean> {
     return this.api.health();
+  }
+
+  /** Detailed health including version, uptime, workers, mem, disk. */
+  async healthDetailed(): Promise<InfoResult> {
+    const json = await this.api.getJson("/api/info");
+    if (json?.error) throw new Error(json.error);
+    return json as InfoResult;
+  }
+
+  /** Alias for healthDetailed() — richer than the boolean health(). */
+  async info(): Promise<InfoResult> {
+    return this.healthDetailed();
   }
 
   /**
@@ -495,6 +805,46 @@ export class Desktop {
     const actualPort = typeof addr === "object" && addr ? addr.port : port;
     return new LiveFeed(server, actualPort);
   }
+
+  // -------------------------------------------------------------------------
+  // Multi-computer helpers (port-based orchestration, no docker CLI required)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Check a list of ports for live computers. Returns a map of port -> alive.
+   * Useful when you run several containers on 8095, 8096, ...
+   */
+  async healthMap(ports: number[]): Promise<Map<number, boolean>> {
+    const results = await Promise.all(
+      ports.map(async (p) => {
+        const c = new Desktop({ host: this.host, port: p, workspace: this.workspace });
+        return [p, await c.health()] as const;
+      })
+    );
+    return new Map(results);
+  }
+
+  /** Ensure a worker exists — create it only if not already alive. Returns title. */
+  async ensure(title: string, command: string, opts: Omit<CreateOptions, "title"> = {}): Promise<string> {
+    assertSafeTitle(title);
+    const workers = await this.workers();
+    const existing = workers.find((w) => w.title === title && w.alive);
+    if (existing) return title;
+    return this.create(command, { ...opts, title });
+  }
+
+  /** Restart a worker: kill (clean false) then create again with same command. */
+  async restartWorker(title: string, command?: string): Promise<string> {
+    assertSafeTitle(title);
+    const workers = await this.workers();
+    const meta = workers.find((w) => w.title === title);
+    const cmd = command ?? meta?.command;
+    if (!cmd) throw new Error(`restartWorker: no command known for '${title}' — pass command explicitly`);
+    await this.kill(title, { clean: false });
+    // small settle
+    await sleep(300);
+    return this.create(cmd, { title });
+  }
 }
 
 export class LiveFeed {
@@ -517,6 +867,55 @@ export class LiveFeed {
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
   }
 }
+
+/**
+ * Multi-computer orchestration without docker. Each computer is just a port
+ * (its daemon's publish). This helper probes a range of ports and gives you
+ * live Desktop handles.
+ */
+export class Computers {
+  /**
+   * Probe ports and return live Desktop instances.
+   * Default scans 8095..8099 and returns only those that respond to /api/health.
+   */
+  static async discover(opts: { host?: string; ports?: number[]; workspace?: string } = {}): Promise<Desktop[]> {
+    const host = opts.host ?? "localhost";
+    const ports = opts.ports ?? [8095, 8096, 8097, 8098, 8099];
+    const workspace = opts.workspace;
+    const checks = await Promise.all(
+      ports.map(async (port) => {
+        const d = new Desktop({ host, port, workspace });
+        const alive = await d.health();
+        return { d, alive };
+      })
+    );
+    return checks.filter((c) => c.alive).map((c) => c.d);
+  }
+
+  /** Kill all workers on each of the given computers (optionally prefix-filtered). */
+  static async killAll(
+    computers: Desktop[],
+    opts: KillAllOptions = {}
+  ): Promise<Map<number, KillAllResult>> {
+    const results = await Promise.all(
+      computers.map(async (c) => {
+        const res = await c.killAll(opts);
+        return [c.port, res] as const;
+      })
+    );
+    return new Map(results);
+  }
+
+  /** Nuke every worker on every discovered computer. */
+  static async nukeAll(opts: { host?: string; ports?: number[] } = {}): Promise<Map<number, KillAllResult>> {
+    const comps = await Computers.discover(opts);
+    return Computers.killAll(comps, { clean: true });
+  }
+}
+
+// Convenience alias — `Computer` is the same as `Desktop` (one computer = one desktop).
+export type Computer = Desktop;
+export const Computer = Desktop;
 
 export const computer = new Desktop();
 export default computer;

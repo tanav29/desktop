@@ -48,7 +48,7 @@ no heavyweight runtime, nothing installed on your host but Docker.
 │   │    │                                      │      │
 │   │  XFCE on Xvfb :99  ·  xdotool             │      │
 │   │  x11vnc → websockify → noVNC :6080        │      │
-│   │  Chromium · xfce4-terminal · ImageMagick  │      │
+│   │  Chromium · xterm · ImageMagick  │      │
 │   └───────────────────────────────────────────┘      │
 │                           │                          │
 │              ./workspace persists on host            │

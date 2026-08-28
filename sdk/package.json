@@ -1,6 +1,6 @@
 {
   "name": "computer-use-sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "TS wrapper for the in-container desktop daemon — pick a computer by port, no docker CLI",
   "type": "module",
   "main": "dist/index.js",
