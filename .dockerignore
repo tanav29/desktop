@@ -1,0 +1,7 @@
+**
+!Dockerfile
+!entrypoint.sh
+!daemon/
+!daemon/daemon.py
+!novnc/
+!novnc/desktop.html

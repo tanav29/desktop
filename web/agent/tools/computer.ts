@@ -1,6 +1,6 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
-import { computer } from "@/lib/computer";
+import { getComputer } from "@/lib/computer";
 import type { Action } from "computer-use-sdk";
 
 /**
@@ -94,17 +94,19 @@ export default defineTool({
     "Coordinates are absolute pixels on the 1600x900 screen. Returns the pointer position and focused window afterwards.",
   ].join(" "),
   inputSchema: z.object({
+    desktop: z.string().optional().describe("Configured desktop name. Required when multiple desktops are configured; use the same name for observe and actions."),
     actions: z
       .array(action)
       .min(1)
       .max(32)
       .describe("Steps to run in order, e.g. [{do:'wait_for',window:'Chromium'},{do:'focus',window:'Chromium'},{do:'click',x:640,y:61},{do:'type',text:'example.com'},{do:'key',keys:'Return'}]"),
   }),
-  async execute({ actions }) {
+  async execute({ actions, desktop }) {
     try {
-      const result = await computer.actions(actions as Action[]);
+      const result = await (await getComputer(desktop)).actions(actions as Action[]);
       const failed = result.failedAt !== undefined ? result.steps[result.failedAt] : null;
       return {
+        desktop: desktop ?? "only discovered desktop",
         ok: result.ok,
         ran: result.ran,
         of: actions.length,

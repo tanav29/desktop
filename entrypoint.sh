@@ -19,7 +19,7 @@ echo "[entrypoint] Starting Xvfb on ${DISPLAY} (${RESOLUTION})"
 Xvfb "${DISPLAY}" -screen 0 "${RESOLUTION}x24" -nolisten tcp &
 XVFB_PID=$!
 
-for _ in $(seq 1 30); do
+for _ in $(seq 1 300); do
     if xdpyinfo -display "${DISPLAY}" >/dev/null 2>&1; then
         break
     fi
@@ -27,7 +27,7 @@ for _ in $(seq 1 30); do
         echo "[entrypoint] FATAL: Xvfb exited while starting up on ${DISPLAY}" >&2
         exit 1
     fi
-    sleep 1
+    sleep 0.1
 done
 
 if ! xdpyinfo -display "${DISPLAY}" >/dev/null 2>&1; then
@@ -40,8 +40,6 @@ eval "$(dbus-launch --sh-syntax)"
 echo "[entrypoint] Starting XFCE session"
 xfce4-session &
 SESSION_PID=$!
-
-sleep 2
 
 echo "[entrypoint] Starting x11vnc on 5900"
 x11vnc -forever -shared -nopw -display "${DISPLAY}" >/var/log/x11vnc.log 2>&1 &

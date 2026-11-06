@@ -1,6 +1,6 @@
 import { defineTool } from "eve/tools";
 import { z } from "zod";
-import { computer } from "@/lib/computer";
+import { getComputer } from "@/lib/computer";
 
 /** Launch, kill, and list desktop apps — one tool instead of three. */
 
@@ -15,6 +15,7 @@ export default defineTool({
   description:
     "Manage apps on the desktop. do:'launch' starts one (needs command + title; the title is how you kill it later, so make it unique — never a generic name like 'Terminal', XFCE already has one). do:'kill' stops it by title. do:'list' names the visible app windows. After launching, use computer's wait_for to wait for the window instead of sleeping. Note the window TITLE is set by the app, not by your title: a terminal shows your title, but Chromium windows are named '<page> - Google Chrome for Testing'.",
   inputSchema: z.object({
+    desktop: z.string().optional().describe("Configured desktop name. Required when multiple desktops are configured; use the same name for observe and actions."),
     do: z.enum(["launch", "kill", "list"]),
     command: z
       .string()
@@ -27,8 +28,9 @@ export default defineTool({
       .optional()
       .describe("Unique id for launch/kill (letters, digits, . _ - only)"),
   }),
-  async execute({ do: action, command, title }) {
+  async execute({ do: action, command, title, desktop }) {
     try {
+      const computer = await getComputer(desktop);
       if (action === "list") {
         const windows = (await computer.windows()).filter((w) => !FURNITURE.has(w));
         return { windows, count: windows.length };

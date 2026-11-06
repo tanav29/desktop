@@ -50,6 +50,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 DISPLAY = os.environ.get("DISPLAY", ":99")
+DESKTOP_NAME = os.environ.get("DESKTOP_NAME", "default")
 RESOLUTION = os.environ.get("RESOLUTION", "1600x900")
 WORKSPACE = "/workspace"
 PORT = int(os.environ.get("API_PORT", "8095"))
@@ -1115,6 +1116,8 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_get(self) -> None:
         route = self._route()
         q = parse_qs(urlparse(self.path).query)
+        if route == "/api/identity":
+            return self._json(200, {"name": DESKTOP_NAME})
         if route in ("/", "/api/health", "/health"):
             ok = display_ok()
             info = _system_info()

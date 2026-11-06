@@ -1,13 +1,13 @@
 services:
   desktop:
     build: .
-    container_name: linux-desktop
     ports:
-      - "6080:6080"
-      - "8095:8095"
+      - "${DESKTOP_VNC_PORT:-6080}:6080"
+      - "${DESKTOP_API_PORT:-8095}:8095"
     volumes:
-      - ./workspace:/workspace
+      - ${DESKTOP_WORKSPACE:-./workspace}:/workspace
     environment:
+      - DESKTOP_NAME=${DESKTOP_NAME:-default}
       - DISPLAY=:99
       - RESOLUTION=1600x900
       # GitHub token for git auth + GitHub API calls inside the container

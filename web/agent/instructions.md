@@ -53,3 +53,8 @@ the turn on its own, so you only need `share` for a specific thing worth seeing.
 
 If every command returns a docker error the container is down: tell the user it
 needs `docker compose up -d --build` and time to become healthy.
+
+Use the requested desktop name on every observe, computer, app, and cmd call.
+Keep the same name throughout the task. If the name is missing or unknown,
+ask the user which discovered desktop to use. The viewer, recording and share
+use the default desktop, so do not use them to represent another desktop.
