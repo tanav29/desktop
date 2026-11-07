@@ -7,6 +7,11 @@ The computer is a Docker image (`computer-desktop`, built from the repo's
 `Dockerfile`): a real Debian 13 (trixie) desktop, small enough to boot in
 seconds and capped at 2 CPU / 3 GB RAM.
 
+The image builds Git in a separate stage and leaves the build toolchain and
+unneeded Scalar binary out of the final image. Chromium remains included for
+browser automation. Build it locally with `docker compose build`; Docker can
+reuse unchanged layers on subsequent builds.
+
 ## The desktop stack
 
 The entrypoint (`entrypoint.sh`) starts the pieces in order:
@@ -48,7 +53,7 @@ apt-get install -y --no-install-recommends build-essential
 No `node`/`npm` either. If a task needs them:
 
 ```bash
-docker exec -d linux-desktop bash -c 'apt-get update && apt-get install -y --no-install-recommends nodejs npm'
+docker compose exec -d desktop bash -c 'apt-get update && apt-get install -y --no-install-recommends nodejs npm'
 ```
 
 ## Files and persistence
@@ -65,7 +70,10 @@ Set these in `docker-compose.yml` (or your shell env):
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `RESOLUTION` | `1600x900` | Virtual display geometry |
+| `RESOLUTION` | `1600x900` | Virtual display geometry (set in Compose) |
+| `DESKTOP_NAME` | `default` | Name used to select the desktop |
+| `DESKTOP_MEMORY_LIMIT` | `3g` | Maximum container memory |
+| `DESKTOP_CPUS` | `2` | Maximum CPU time in cores |
 | `DISPLAY` | `:99` | X display used by everything GUI |
 | `API_PORT` | `8095` | Daemon port inside the container |
 | `GH_TOKEN` / `GITHUB_TOKEN` | empty | Git auth + GitHub API calls from inside |
@@ -75,8 +83,8 @@ Set these in `docker-compose.yml` (or your shell env):
 ## Resources and health
 
 ```yaml
-mem_limit: 3g        # Chromium is the memory hog — raise if needed
-cpus: 2
+mem_limit: ${DESKTOP_MEMORY_LIMIT:-3g}
+cpus: ${DESKTOP_CPUS:-2}
 restart: unless-stopped
 healthcheck:         # probes BOTH the viewer page and /api/health,
   interval: 30s      # so a dead desktop fails instead of faking healthy
@@ -86,7 +94,7 @@ Check health yourself:
 
 ```bash
 curl -sf http://localhost:8095/api/health   # {"ok": true} only when the X display answers
-docker exec linux-desktop pgrep -f xfce4-session   # desktop process alive
+docker compose exec desktop pgrep -f xfce4-session   # desktop process alive
 ```
 
 More operational detail in [Docker setup](/docs/docker).

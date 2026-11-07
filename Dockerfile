@@ -19,7 +19,9 @@ RUN make -C /src -j"$(nproc)" prefix=/usr NO_PERL=1 NO_TCLTK=1 NO_GETTEXT=1 all
 RUN make -C /src prefix=/usr NO_PERL=1 NO_TCLTK=1 NO_GETTEXT=1 NO_INSTALL_HARDLINKS=1 DESTDIR=/out install
 RUN find /out -type f -name 'git*' -exec strip --strip-unneeded {} + 2>/dev/null; \
     rm -rf /out/usr/share/gitweb /out/usr/libexec/git-core/bin-wrappers \
-           /out/usr/lib/systemd /out/usr/share/locale
+           /out/usr/lib/systemd /out/usr/share/locale /out/usr/libexec/git-core/scalar \
+ && rm -f /out/usr/libexec/git-core/git \
+ && ln -s /usr/bin/git /out/usr/libexec/git-core/git
 
 # ---------------------------------------------------------------------------
 # Stage 1: XFCE desktop with Debian's standard Chromium package.

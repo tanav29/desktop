@@ -24,7 +24,7 @@ desktop is genuinely down, not just unobservable.
 | App invisible on screen | Missing `DISPLAY=:99`, or minimized → `windowactivate`; check with `search --onlyvisible` |
 | Nothing on screen at all | Xvfb crashed → `docker compose logs -f`; container should auto-restart (`restart: unless-stopped`) |
 | `Can't open display` | Env lost in your shell → pass `DISPLAY=:99` explicitly |
-| Container OOM / Chromium dies | Memory cap hit → raise `mem_limit` (default 3g) in `docker-compose.yml` |
+| Container OOM / Chromium dies | Memory cap hit → raise `DESKTOP_MEMORY_LIMIT` (default 3g) and recreate the container with `docker compose up -d` |
 | Daemon unreachable from SDK | Wrong port → `Desktop({ port })` must match the published host port; check `docker ps` |
 | Healthcheck never passes | One of the two probes failing — test both URLs above manually |
 | Actions fail at step N | Read `failedAt` + `steps[N].note` in the response — it names the exact step and reason |

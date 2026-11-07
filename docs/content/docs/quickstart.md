@@ -11,21 +11,42 @@ code. Total time: about two minutes.
 - [Docker](https://docs.docker.com/get-docker/) (Docker Desktop works fine)
 - Node.js 18+ — only if you want to use the TypeScript SDK
 
-## 1. Boot the computer
+## 1. Configure and boot the desktop
 
-Clone the repository and start the container from its root:
+Clone the repository, then set a name, maximum memory, and CPU allocation before
+starting it. These examples use a 3 GB memory limit and up to 2 CPU cores.
 
 ```bash
 git clone https://github.com/tanav29/desktop && cd desktop
+DESKTOP_NAME=research DESKTOP_MEMORY_LIMIT=3g DESKTOP_CPUS=2 docker compose up -d --build
+```
+
+In PowerShell, set the variables first instead:
+
+```powershell
+$env:DESKTOP_NAME = "research"
+$env:DESKTOP_MEMORY_LIMIT = "3g"
+$env:DESKTOP_CPUS = "2"
 docker compose up -d --build
 ```
 
-This builds the image (`computer-desktop`) and starts one container named
-`linux-desktop`. Wait for it to become `healthy`:
+The name identifies the desktop to the agent; it is not the Docker container
+name. The memory limit is a maximum, not a reservation or the host's total RAM.
+The CPU value is a CPU-time limit and can be fractional (for example `1.5`).
+Docker Desktop must have enough memory and CPUs allocated to run the container.
+Omit these settings for the defaults: `default`, `3g`, and `2`.
+
+Check startup and the applied limits:
 
 ```bash
-docker ps --filter name=linux-desktop
+docker compose ps
+docker inspect $(docker compose ps -q desktop) --format 'Memory limit: {{.HostConfig.Memory}} bytes; CPUs: {{.HostConfig.NanoCpus}} nanocpus'
+curl http://localhost:8095/api/identity
 ```
+
+In PowerShell, use `docker inspect (docker compose ps -q desktop) --format 'Memory limit: {{.HostConfig.Memory}} bytes; CPUs: {{.HostConfig.NanoCpus}} nanocpus'`.
+One billion nanocpus equals one CPU. See [Docker setup](/docs/docker) for
+multiple desktops and changing settings later.
 
 ## 2. Verify and look at it
 

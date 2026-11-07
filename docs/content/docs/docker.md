@@ -11,7 +11,7 @@ more than one computer.
 
 - [Docker](https://docs.docker.com/get-docker/) with Compose v2
   (Docker Desktop includes both)
-- ~3 GB RAM to spare per computer (the container is capped at `mem_limit: 3g`)
+- Enough Docker memory for your workload (the default per-desktop cap is 3 GB)
 
 ## Lifecycle
 
@@ -19,11 +19,11 @@ more than one computer.
 docker compose up -d --build   # build + start (first boot builds the image)
 docker compose down            # stop and remove container (image kept)
 docker compose logs -f         # watch the boot: Xvfb → XFCE → x11vnc → websockify → daemon
-docker ps --filter name=linux-desktop
+docker compose ps
 ```
 
 First build takes a few minutes; every start after that is seconds. Wait for
-`healthy` in `docker ps`, then open <http://localhost:6080/vnc.html>.
+`healthy` in `docker compose ps`, then open <http://localhost:6080/vnc.html>.
 
 ## Reset semantics
 
@@ -40,74 +40,64 @@ The container also restarts itself (`restart: unless-stopped`) if any part of
 the desktop stack dies — the entrypoint exits on purpose so tini/compose can
 bring the whole box back up cleanly.
 
-## What compose sets up
+## Configure a desktop
 
-```yaml
-services:
-  desktop:
-    build: .
-    container_name: linux-desktop
-    ports:
-      - "6080:6080"        # noVNC viewer — for humans
-      - "8095:8095"        # daemon HTTP API — for agents
-    volumes:
-      - ./workspace:/workspace   # persists on host
-    environment:
-      - DISPLAY=:99
-      - RESOLUTION=1600x900
-      - GH_TOKEN=${GH_TOKEN:-}         # git auth + GitHub API inside
-      - GIT_AUTHOR_NAME=${GIT_AUTHOR_NAME:-eve-agent}
-      - GIT_AUTHOR_EMAIL=${GIT_AUTHOR_EMAIL:-eve@agent.local}
-      - GIT_COMMITTER_NAME=${GIT_COMMITTER_NAME:-eve-agent}
-      - GIT_COMMITTER_EMAIL=${GIT_COMMITTER_EMAIL:-eve@agent.local}
-    init: true            # tini reaps children — kills are clean
-    mem_limit: 3g         # Chromium is the memory hog; raise if needed
-    cpus: 2
-    restart: unless-stopped
-    healthcheck:          # probes /vnc.html AND /api/health
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-```
-
-### Environment variables
+Set these environment variables before `docker compose up -d --build`, or put
+them in a `.env` file beside `docker-compose.yml` (see `.env.example`).
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `RESOLUTION` | `1600x900` | Virtual display size |
-| `GH_TOKEN` / `GITHUB_TOKEN` | empty | Git auth + GitHub API calls from inside the container |
+| `DESKTOP_NAME` | `default` | Name reported to the agent; use a unique name per desktop |
+| `DESKTOP_MEMORY_LIMIT` | `3g` | Maximum container memory, for example `4g` or `2048m` |
+| `DESKTOP_CPUS` | `2` | Maximum CPU time in cores; fractional values such as `1.5` are allowed |
+| `DESKTOP_API_PORT` | `8095` | Host port for the daemon |
+| `DESKTOP_VNC_PORT` | `6080` | Host port for the viewer |
+| `DESKTOP_WORKSPACE` | `./workspace` | Host directory mounted at `/workspace` |
+| `GH_TOKEN` | empty | Git auth and GitHub API access inside the container |
 | `GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL` | `eve-agent` / `eve@agent.local` | Commit identity |
 | `GIT_COMMITTER_NAME` / `GIT_COMMITTER_EMAIL` | same as author | Commit identity |
 
-Put secrets in a `.env` file next to `docker-compose.yml` (see `.env.example`).
+The memory setting is a cap, not an allocation or a guarantee. Total host RAM
+is determined by the machine and, with Docker Desktop, its configured resource
+limits. Choose caps that fit the available Docker resources; running several
+desktops requires enough resources for their combined workload. Use
+`docker compose ps` and `docker stats` to inspect running containers.
+
+To change a desktop's settings, update the environment and run `docker compose
+up -d` again with the same project name. Compose recreates the container when
+its configuration changes; files in the mounted workspace persist.
 
 ## Run multiple computers
 
-Each computer = one container with its own published daemon port. Copy the
-service, change the names and ports:
+Give each desktop a unique name, Compose project, ports, and workspace. For
+example, in PowerShell:
 
-```yaml
-services:
-  desktop-1:
-    build: .
-    container_name: linux-desktop-1
-    ports: ["6080:6080", "8095:8095"]
-    volumes: ["./workspace-1:/workspace"]
-    # ...same env/caps as above
+```powershell
+$env:DESKTOP_NAME = "research"
+$env:DESKTOP_MEMORY_LIMIT = "3g"
+$env:DESKTOP_CPUS = "2"
+$env:DESKTOP_API_PORT = "8095"
+$env:DESKTOP_VNC_PORT = "6080"
+$env:DESKTOP_WORKSPACE = "./workspace-research"
+docker compose -p research up -d --build
 
-  desktop-2:
-    build: .
-    container_name: linux-desktop-2
-    ports: ["6082:6080", "8096:8095"]
-    volumes: ["./workspace-2:/workspace"]
+$env:DESKTOP_NAME = "coding"
+$env:DESKTOP_MEMORY_LIMIT = "4g"
+$env:DESKTOP_CPUS = "1.5"
+$env:DESKTOP_API_PORT = "8096"
+$env:DESKTOP_VNC_PORT = "6081"
+$env:DESKTOP_WORKSPACE = "./workspace-coding"
+docker compose -p coding up -d --build
 ```
 
-From the SDK, the daemon port *is* the computer:
+Tell the agent the desktop name. The web app discovers local daemon ports
+8095?8099 by default; configure `COMPUTER_DISCOVERY_PORTS` in the web app for
+other ports. The web viewer, recording, and share tools still use the default
+desktop. The SDK can target a desktop directly by its API port:
 
 ```ts
-const comp1 = new Desktop({ port: 8095 });
-const comp2 = new Desktop({ port: 8096 });
+const research = new Desktop({ port: 8095 });
+const coding = new Desktop({ port: 8096 });
 ```
 
 ## Verifying health
@@ -115,7 +105,7 @@ const comp2 = new Desktop({ port: 8096 });
 ```bash
 curl -sf http://localhost:6080/vnc.html >/dev/null && echo viewer-ok
 curl -sf http://localhost:8095/api/health          # {"ok":true} only when X answers
-docker exec linux-desktop pgrep -f xfce4-session   # desktop process alive
+docker compose exec desktop pgrep -f xfce4-session   # desktop process alive
 ```
 
 The compose healthcheck requires both the viewer page and the daemon health
@@ -124,7 +114,7 @@ page.
 
 ## Tips
 
-- Chromium is the memory hog — raise `mem_limit` if you see OOM kills.
+- Chromium is the memory hog — raise `DESKTOP_MEMORY_LIMIT` if you see OOM kills.
 - Watch first boot with `docker compose logs -f`; you should see the chain
   Xvfb → XFCE → x11vnc → websockify → daemon come up in order.
 - For manual GUI poking via `docker exec`, remember `DISPLAY=:99`.

@@ -19,8 +19,8 @@ services:
       - GIT_COMMITTER_NAME=${GIT_COMMITTER_NAME:-eve-agent}
       - GIT_COMMITTER_EMAIL=${GIT_COMMITTER_EMAIL:-eve@agent.local}
     init: true
-    mem_limit: 3g
-    cpus: 2
+    mem_limit: ${DESKTOP_MEMORY_LIMIT:-3g}
+    cpus: ${DESKTOP_CPUS:-2}
     # Bring the container back automatically; the entrypoint exits on purpose
     # when any part of the desktop stack dies.
     restart: unless-stopped
