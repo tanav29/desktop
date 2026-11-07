@@ -107,7 +107,7 @@ For motion instead of stills, see [`live()` and `frames()`](/docs/sdk#live-frame
 
 ```bash
 docker exec -d linux-desktop bash -c 'DISPLAY=:99 xterm -title worker-1 -e bash'
-docker exec -d linux-desktop bash -c 'DISPLAY=:99 /opt/chrome/chrome --no-sandbox --disable-dev-shm-usage --no-first-run https://example.com'
+docker exec -d linux-desktop bash -c 'DISPLAY=:99 chromium https://example.com'
 ```
 
 From the SDK, `create()` handles the title flag for you:

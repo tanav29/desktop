@@ -22,12 +22,7 @@ RUN find /out -type f -name 'git*' -exec strip --strip-unneeded {} + 2>/dev/null
            /out/usr/lib/systemd /out/usr/share/locale
 
 # ---------------------------------------------------------------------------
-# Stage 1: XFCE + Chromium + tiny browsers — full app list with minimal bloat.
-#
-# XFCE gives the top panel + Whisker menu (all apps list) that openbox+tint2
-# lacks. Chromium (Chrome for Testing) is needed for modern web; tiny browsers
-# (dillo/netsurf/links2) stay as <10 MB fallback. No ffmpeg (~170 MB saved),
-# perl-free git (~80 MB saved), Mesa/LLVM stripped (~215 MB), docs/mime trimmed.
+# Stage 1: XFCE desktop with Debian's standard Chromium package.
 # ---------------------------------------------------------------------------
 FROM debian:stable-slim
 
@@ -40,7 +35,7 @@ RUN sed -i -e 's|http://deb.debian.org/debian-security|http://mirrors.ocf.berkel
            -e 's|http://deb.debian.org/debian|http://mirrors.edge.kernel.org/debian|g' \
     /etc/apt/sources.list.d/debian.sources
 
-# XFCE desktop + VNC + agent tooling + Chromium deps.
+# XFCE desktop + VNC + agent tooling + Chromium.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         xvfb \
@@ -65,51 +60,15 @@ RUN apt-get update \
         imagemagick \
         xclip \
         ca-certificates \
-        libnspr4 \
-        libnss3 \
-        libasound2t64 \
-        libatk-bridge2.0-0 \
-        libatk1.0-0t64 \
-        libcups2t64 \
-        libdrm2 \
-        libgbm1 \
-        libgtk-3-0t64 \
-        libpango-1.0-0 \
-        libudev1 \
-        libxcomposite1 \
-        libxdamage1 \
-        libxfixes3 \
-        libxkbcommon0 \
-        libxrandr2 \
-        libxtst6 \
-        libxss1 \
-        libexpat1 \
-        dillo \
-        netsurf-gtk \
-        links2 \
-    && apt-get purge -y perl-modules-5.40 libperl5.40 2>/dev/null || true \
-    && apt-get autoremove -y \
+        chromium \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* \
-    && rm -rf /usr/share/doc /usr/share/man /usr/share/perl \
-    && rm -rf /usr/libexec/gcc \
-    && rm -f /usr/bin/cpp /usr/bin/cpp-* /usr/bin/*-cpp* \
-    && rm -rf /usr/lib/x86_64-linux-gnu/perl-base/unicore \
-    && rm -f /usr/lib/x86_64-linux-gnu/libisl*.so* \
-             /usr/lib/x86_64-linux-gnu/libmpc*.so* \
-             /usr/lib/x86_64-linux-gnu/libmpfr*.so* \
-             /usr/lib/x86_64-linux-gnu/libdb-5.3* \
-    && rm -rf /usr/lib/x86_64-linux-gnu/dri \
-    && rm -f /usr/lib/x86_64-linux-gnu/libgallium-*.so \
-             /usr/lib/x86_64-linux-gnu/libLLVM*.so* \
-             /usr/lib/x86_64-linux-gnu/libz3.so* \
-             /usr/lib/x86_64-linux-gnu/libGLX_mesa* \
-             /usr/lib/x86_64-linux-gnu/libGLX_indirect* \
+    && rm -rf /usr/share/doc /usr/share/man \
     # keep Adwaita/hicolor icons and mime db for XFCE — previous trim broke gtk icon loading
-    && find /usr/lib/python3.13 -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true \
-    && gdk-pixbuf-query-loaders --update-cache 2>/dev/null || true \
-    && update-mime-database /usr/share/mime 2>/dev/null || true \
-    && update-icon-caches /usr/share/icons/* 2>/dev/null || true
+    && (find /usr/lib/python3.13 -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true) \
+    && (gdk-pixbuf-query-loaders --update-cache 2>/dev/null || true) \
+    && (update-mime-database /usr/share/mime 2>/dev/null || true) \
+    && (update-icon-caches /usr/share/icons/* 2>/dev/null || true)
 
 # noVNC + websockify (stdlib wheel — avoids numpy/BLAS)
 RUN curl -fsSL https://github.com/novnc/noVNC/archive/refs/tags/v1.5.0.tar.gz -o /tmp/novnc.tgz \
@@ -120,29 +79,17 @@ RUN curl -fsSL https://github.com/novnc/noVNC/archive/refs/tags/v1.5.0.tar.gz -o
  && python3 -c "import zipfile;zipfile.ZipFile('/tmp/ws.whl').extractall('/opt/websockify')" \
  && rm -rf /tmp/novnc.tgz /tmp/ws.whl
 
-# Chromium (real build from Chrome for Testing — Ubuntu package is a snap stub).
-RUN curl -fsSL https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json -o /tmp/cft.json \
- && python3 -c "import json;d=json.load(open('/tmp/cft.json'));print([x['url'] for x in d['channels']['Stable']['downloads']['chrome'] if x['platform']=='linux64'][0])" > /tmp/chrome_url \
- && curl -fsSL "$(cat /tmp/chrome_url)" -o /tmp/chrome.zip \
- && python3 -c "import zipfile;zipfile.ZipFile('/tmp/chrome.zip').extractall('/opt')" \
- && mv /opt/chrome-linux64 /opt/chrome \
- && rm -f /opt/chrome/chrome_sandbox \
- && chmod +x /opt/chrome/chrome /opt/chrome/chrome_crashpad_handler /opt/chrome/chrome-wrapper \
- && printf '#!/bin/sh\nexec /opt/chrome/chrome --no-sandbox --disable-dev-shm-usage --no-first-run "$@"\n' > /usr/local/bin/chromium \
+# Chromium runs as root in this container, so its sandbox must be disabled.
+# Keep Debian's complete browser and dependencies, including software rendering.
+ENV BROWSER=/usr/local/bin/chromium
+RUN printf '#!/bin/sh\nexec /usr/bin/chromium --no-sandbox --disable-dev-shm-usage --no-first-run "$@"\n' > /usr/local/bin/chromium \
  && chmod +x /usr/local/bin/chromium \
- && rm -rf /opt/chrome/WidevineCdm /opt/chrome/hyphen-data \
- && cd /opt/chrome/locales \
- && for f in *.pak; do [ "$f" = "en-US.pak" ] || rm -f "$f"; done \
- && rm -rf /tmp/*
-
-# Tiny browser shims — `browser` tries Chrome -> netsurf -> dillo -> links2
-RUN printf '#!/bin/sh\nif command -v chromium >/dev/null 2>&1; then exec chromium "$@"; fi\nif command -v netsurf-gtk >/dev/null 2>&1; then exec netsurf-gtk "$@"; fi\nif command -v dillo >/dev/null 2>&1; then exec dillo "$@"; fi\nif command -v links2 >/dev/null 2>&1; then exec links2 -g "$@"; fi\necho "no browser found" >&2; exit 1\n' > /usr/local/bin/browser \
- && chmod +x /usr/local/bin/browser \
- && printf '[Desktop Entry]\nType=Application\nName=Chromium\nComment=Web browser\nExec=/opt/chrome/chrome --no-sandbox --disable-dev-shm-usage --no-first-run %%U\nIcon=applications-internet\nTerminal=false\nCategories=Network;WebBrowser;\nMimeType=text/html;text/xml;application/xhtml+xml;\n' > /usr/share/applications/chromium.desktop \
- && printf '[Desktop Entry]\nType=Application\nName=Netsurf\nComment=Lightweight web browser\nExec=netsurf-gtk %%U\nIcon=applications-internet\nTerminal=false\nCategories=Network;WebBrowser;\n' > /usr/share/applications/netsurf.desktop \
- && printf '[Desktop Entry]\nType=Application\nName=Dillo\nComment=Ultra-light web browser\nExec=dillo %%U\nIcon=applications-internet\nTerminal=false\nCategories=Network;WebBrowser;\n' > /usr/share/applications/dillo.desktop \
+ && ln -s /usr/local/bin/chromium /usr/local/bin/browser \
+ && printf '[Desktop Entry]\nType=Application\nName=Chromium\nComment=Web browser\nExec=/usr/local/bin/chromium %%U\nIcon=chromium\nTerminal=false\nCategories=Network;WebBrowser;\nMimeType=text/html;text/xml;application/xhtml+xml;\n' > /usr/share/applications/chromium.desktop \
  && printf '[Desktop Entry]\nType=Application\nName=File Manager\nComment=Browse files\nExec=pcmanfm\nIcon=system-file-manager\nTerminal=false\nCategories=System;FileManager;\n' > /usr/share/applications/pcmanfm.desktop \
- && chmod 644 /usr/share/applications/chromium.desktop /usr/share/applications/netsurf.desktop /usr/share/applications/dillo.desktop /usr/share/applications/pcmanfm.desktop \
+ && mkdir -p /etc/xdg \
+ && printf '[Default Applications]\nx-scheme-handler/http=chromium.desktop;\nx-scheme-handler/https=chromium.desktop;\ntext/html=chromium.desktop;\napplication/xhtml+xml=chromium.desktop;\n' > /etc/xdg/mimeapps.list \
+ && rm -f /usr/share/applications/debian-uxterm.desktop /usr/share/applications/uxterm.desktop /usr/bin/uxterm \
  && mkdir -p /workspace && chmod 777 /workspace
 
 # xterm tuning + XFCE panel not needed — whisker menu already lists all apps

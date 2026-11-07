@@ -167,8 +167,8 @@ await computer.cmd("pgrep -f xfce4-session");      // desktop is up
 await computer.create("chromium https://example.com", { title: "web-1" });
 
 await computer.actions([
-  { do: "wait_for", window: "Chrome for Testing", timeoutMs: 45_000 },
-  { do: "focus",    window: "Chrome for Testing" },
+  { do: "wait_for", window: "Chromium", timeoutMs: 45_000 },
+  { do: "focus",    window: "Chromium" },
   { do: "key",      keys: "ctrl+l" },
   { do: "paste",    text: "https://news.ycombinator.com" },
   { do: "key",      keys: "Return" },

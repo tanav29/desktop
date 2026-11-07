@@ -18,19 +18,15 @@ Don't add `--user-data-dir` yourself unless you want to reuse a profile.
 
 The `chromium` on PATH is a wrapper that already passes `--no-sandbox
 --disable-dev-shm-usage --no-first-run`, which it needs to run in this container.
-Don't call `/opt/chrome/chrome` directly — without those flags it refuses to
-start as root.
+The wrapper supplies the flags needed to run Chromium as root in the container.
 
-**The window is not called "Chromium".** This is a Chrome-for-Testing build, so
-every window is titled `<page title> - Google Chrome for Testing`. Match on
-`Chrome for Testing`; matching on your launch title or on "Chromium" will time
-out. A fresh profile takes 10-20s to map its first window on this 2-CPU
-container, so give it room:
+Chromium window titles usually contain `Chromium`; match the window title rather
+than the app's launch title.
 
 ```
 computer { actions: [
-  { do: "wait_for", window: "Chrome for Testing", timeoutMs: 45000 },
-  { do: "focus", window: "Chrome for Testing" }
+  { do: "wait_for", window: "Chromium", timeoutMs: 45000 },
+  { do: "focus", window: "Chromium" }
 ]}
 ```
 
@@ -42,7 +38,7 @@ focuses it without a click and is more reliable, so prefer:
 
 ```
 computer { actions: [
-  { do: "focus",  window: "Chrome for Testing" },
+  { do: "focus",  window: "Chromium" },
   { do: "key",    keys: "ctrl+l" },
   { do: "type",   text: "example.com" },
   { do: "key",    keys: "Return" },

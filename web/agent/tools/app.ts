@@ -13,7 +13,7 @@ const FURNITURE = new Set(["Xfwm4", "Desktop", "xfce4-panel", "wrapper-2.0"]);
 
 export default defineTool({
   description:
-    "Manage apps on the desktop. do:'launch' starts one (needs command + title; the title is how you kill it later, so make it unique — never a generic name like 'Terminal', XFCE already has one). do:'kill' stops it by title. do:'list' names the visible app windows. After launching, use computer's wait_for to wait for the window instead of sleeping. Note the window TITLE is set by the app, not by your title: a terminal shows your title, but Chromium windows are named '<page> - Google Chrome for Testing'.",
+    "Manage apps on the desktop. do:'launch' starts one (needs command + title; the title is how you kill it later, so make it unique — never a generic name like 'Terminal', XFCE already has one). do:'kill' stops it by title. do:'list' names the visible app windows. After launching, use computer's wait_for to wait for the window instead of sleeping. Note the window TITLE is set by the app, not by your title: a terminal shows your title, but Chromium windows are named '<page> - Chromium'.",
   inputSchema: z.object({
     desktop: z.string().optional().describe("Configured desktop name. Required when multiple desktops are configured; use the same name for observe and actions."),
     do: z.enum(["launch", "kill", "list"]),

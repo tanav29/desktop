@@ -37,7 +37,7 @@ Everything an agent needs to do real work:
 | Images | ImageMagick — `import` (screenshots), `convert` |
 | X11 control | `xdotool`, xvfb, x11vnc |
 | Clipboard | `xclip` |
-| Browser | Chromium (Chrome-for-Testing build) at `/opt/chrome/chrome`, aliased as `chromium` |
+| Browser | Debian Chromium, launched with the `chromium` wrapper |
 
 Build tools are **not** preinstalled (kept out for size). Install on demand:
 
